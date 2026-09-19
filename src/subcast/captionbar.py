@@ -39,6 +39,14 @@ DEFAULT_SCALE = 2
 # by the space the terminal actually has.
 MIN_COLUMNS = 20
 
+# How much wider a window has to be before the captions step up a size, and
+# how big they may get. Extra width goes into bigger text rather than ever
+# longer lines, so the block keeps filling a similar share of the window
+# however it is sized — maximise the terminal and the captions grow with it.
+SCALE_STEP_COLUMNS = 45
+
+MAX_SCALE = 3
+
 SIZING_QUERY = "\x1b[6n"
 
 TITLE_COLOUR = "\x1b[2;36m"  # faint cyan: readable, not competing
@@ -63,6 +71,19 @@ def _request_stop(signum, frame) -> None:
     global _STOPPING
 
     _STOPPING = True
+
+
+def auto_scale(
+    columns: int,
+) -> int:
+    """
+    Caption size that suits a window this wide.
+    """
+
+    return min(
+        max(columns // SCALE_STEP_COLUMNS, 1),
+        MAX_SCALE,
+    )
 
 
 def caption_width(
@@ -539,24 +560,30 @@ def play(
     cues: list[tuple[float, float, str]],
     segments: list[tuple[float, float, str]],
     chapters_path: Path | None = None,
-    scale: int = DEFAULT_SCALE,
+    scale: int | None = None,
     warn_about_scale: bool = False,
 ) -> int:
     """
     Play url through mpv with our own caption block. Returns mpv's exit
     status.
 
-    `scale` is the caption size multiplier; it needs a terminal that
-    renders scaled text (kitty 0.40+), and is dropped back to 1 anywhere
-    else. The width of the block always follows the window.
+    `scale` is the caption size multiplier, or None to size the captions
+    to the window (a wider window gets bigger captions, not ever longer
+    lines). It needs a terminal that renders scaled text (kitty 0.40+) and
+    is dropped back to 1 anywhere else. The width of the block always
+    follows the window.
     """
 
     if (
-        scale > 1
-        and not supports_scaled_text()
-    ):
+        scale is None
+        or scale > 1
+    ) and not supports_scaled_text():
 
-        if warn_about_scale:
+        if (
+            warn_about_scale
+            and scale is not None
+            and scale > 1
+        ):
 
             print(
                 f"    This terminal cannot render text at {scale}x; "
@@ -686,7 +713,9 @@ def _follow(
             columns, lines = terminal_size()
 
             board_scale = effective_scale(
-                scale,
+                scale
+                if scale is not None
+                else auto_scale(columns),
                 max(lines, BLOCK_ROWS),
                 columns,
             )
@@ -759,7 +788,9 @@ def _follow(
                 ),
                 columns=final_columns,
                 scale=effective_scale(
-                    scale,
+                    scale
+                    if scale is not None
+                    else auto_scale(final_columns),
                     max(final_lines, BLOCK_ROWS),
                     final_columns,
                 ),
