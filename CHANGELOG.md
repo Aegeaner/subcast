@@ -90,6 +90,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stream URL has to be found first (RTÉ) are resolved as before, and the
   steps that remain say what they are doing (`Resolving:`,
   `Fetching captions:`) instead of waiting in silence.
+- A resolve now keeps the stream URLs it found next to the title, and an
+  item the cache has them for is handed to mpv as those URLs rather than as
+  a page for it to extract: a replay's first frame measured 3.4-3.8s
+  against 15-22s with the extraction left to mpv. They are handed over with
+  no HTTP headers of ours: YouTube refuses a googlevideo URL asked for with
+  the browser headers yt-dlp reports (`HTTP error 400`, reproduced both
+  ways) while the same URL plays when mpv sends its own, so the fewer of
+  ours on the request, the better. An item the cache has no URLs for - a
+  first play, whose resolve is still running - gets the page exactly as
+  before, and a stream mpv cannot load falls back to the page on the retry.
 - Cached audio, transcripts and subtitles moved under `~/.cache/subcast/<source>/`,
   and saved episodes under `~/Videos/<source>/`, so paths no longer assume
   one show. Existing caches keep working if moved into those directories.

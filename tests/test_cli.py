@@ -137,6 +137,8 @@ def test_a_replay_does_not_ask_what_a_url_points_at(monkeypatch):
             title="A talk",
             duration=812.5,
             resolved=time.time(),
+            formats=[],
+            expires=0.0,
         ),
     )
 
@@ -168,6 +170,8 @@ def test_a_stale_resolve_is_listed_again(monkeypatch):
             title="A talk",
             duration=812.5,
             resolved=time.time() - cli.meta.RESOLVE_TTL - 1,
+            formats=[],
+            expires=0.0,
         ),
     )
 
@@ -212,9 +216,6 @@ def test_an_item_whose_stream_url_we_must_find_is_resolved(monkeypatch):
     monkeypatch.setattr(cli, "has_transcript", lambda media: True)
     monkeypatch.setattr(cli.meta, "fresh", lambda media: True)
 
-    saved: list[str] = []
-    monkeypatch.setattr(cli.meta, "save", lambda media: saved.append(media.title))
-
     resolved = media(title="Resolved")
 
     class Source:
@@ -223,8 +224,8 @@ def test_an_item_whose_stream_url_we_must_find_is_resolved(monkeypatch):
 
     item = replace(resolved, kind="audio", stream=False)
 
+    # the resolve is what writes down what it learned, so this must happen
     assert cli.resolve_item(Source(), item) is resolved
-    assert saved == ["Resolved"]
 
 
 def test_a_source_mpv_resolves_plays_before_being_prepared():
@@ -396,7 +397,7 @@ def test_a_listing_is_played_item_after_item(monkeypatch):
     monkeypatch.setattr(cli, "saved_positions", lambda media, args: None)
     monkeypatch.setattr(cli, "chapters_for", lambda media: None)
 
-    def play(media, args, subtitles):
+    def play(source, item, media, args, subtitles):
         assert subtitles.wait() is PREPARED
         order.append(f"played {media.key}")
         return 0

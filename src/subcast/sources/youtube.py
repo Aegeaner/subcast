@@ -16,6 +16,7 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
+from .. import meta
 from . import Captions, Media, Segment
 
 NAME = "youtube"
@@ -97,11 +98,21 @@ class Youtube:
         """
         Fill in what playing an item needs: duration, chapters, and the
         captions YouTube already has.
+
+        What the resolve listed about the streams is written down as well:
+        mpv would otherwise run the same extraction again for itself before
+        the first frame.
         """
 
-        return parse_media(
-            yt_dlp_json(media.url)
+        payload = yt_dlp_json(media.url)
+        resolved = parse_media(payload)
+
+        meta.save(
+            resolved,
+            payload.get("formats") or [],
         )
+
+        return resolved
 
     @staticmethod
     def video_id(

@@ -795,11 +795,7 @@ def resolve_item(
         flush=True,
     )
 
-    media = source.resolve(item)
-
-    meta.save(media)
-
-    return media
+    return source.resolve(item)
 
 
 def prepare_item(
@@ -988,6 +984,8 @@ def chapters_for(
 
 
 def play_item(
+    source: Source,
+    item: Media,
     media: Media,
     args: argparse.Namespace,
     subtitles: PendingSubtitles | None,
@@ -1013,7 +1011,14 @@ def play_item(
         media
     )
 
-    if media.is_audio or args.audio_only:
+    audio = media.is_audio or args.audio_only
+
+    streams = meta.streams(
+        media,
+        None if audio else args.quality,
+    )
+
+    if audio:
 
         if subtitles is not None and caption_style(args) == "bar":
 
@@ -1034,6 +1039,7 @@ def play_item(
             stream=media.stream,
             positions=positions,
             subtitles=subtitles,
+            streams=streams,
         )
 
     return play_window(
@@ -1044,6 +1050,7 @@ def play_item(
         stream=media.stream,
         positions=positions,
         subtitles=subtitles,
+        streams=streams,
     )
 
 
@@ -1245,6 +1252,8 @@ def main() -> int:
                 )
 
             status = play_item(
+                target.source,
+                item,
                 media,
                 args,
                 subtitles,

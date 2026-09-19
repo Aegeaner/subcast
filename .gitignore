@@ -12,3 +12,7 @@ dist/
 # ~/.config/subcast/feeds.json, and one kept beside the code must not be
 # committed either.
 feeds.json
+
+# Agent working notes for this checkout: local to one machine, and not
+# something to publish from it.
+.omp/

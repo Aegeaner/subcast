@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from .meta import Streams
 from .subtitles import PendingSubtitles
 
 # How often where an item got to is written down. Often enough that a run
@@ -34,12 +35,15 @@ LOAD_ERROR = 2
 
 def retry_load_error(
     play: Callable[[], int],
+    again: Callable[[], int] | None = None,
 ) -> int:
     """
     Run an mpv attempt, giving a stream it could not load one more go.
 
-    Only mpv's own "couldn't be played" is retried: quitting normally, a
-    bad option, or Ctrl-C all come back with their own status.
+    Only mpv's own "couldn't be played" is retried: quitting normally, a bad
+    option, or Ctrl-C all come back with their own status. `again` is what
+    the second attempt runs instead - for a run that was given stream URLs,
+    the same command with the page URL, which mpv resolves for itself.
     """
 
     status = play()
@@ -53,7 +57,7 @@ def retry_load_error(
         flush=True,
     )
 
-    return play()
+    return (again or play)()
 
 
 def mpv_path() -> str:
@@ -345,21 +349,41 @@ def run_mpv(
     command: list[str],
     positions: Positions | None = None,
     subtitles: PendingSubtitles | None = None,
+    rebuild: Callable[[], list[str]] | None = None,
 ) -> int:
     """
     Play through mpv, remembering where the item gets to and handing it the
     subtitles once they are ready.
 
     With neither, mpv is left entirely to itself, which is what every
-    caller did before resumes and background subtitles existed.
+    caller did before resumes and background subtitles existed. `rebuild`
+    builds the command again for a retry, which is what a run holding signed
+    stream URLs wants.
     """
 
-    return retry_load_error(
-        lambda: _run_once(
+    def play() -> int:
+
+        return _run_once(
             command,
             positions,
             subtitles,
         )
+
+    def refresh() -> int:
+
+        return _run_once(
+            rebuild(),
+            positions,
+            subtitles,
+        )
+
+    return retry_load_error(
+        play,
+        again=(
+            refresh
+            if rebuild is not None
+            else None
+        ),
     )
 
 
@@ -522,6 +546,34 @@ def follow(
         client.close()
 
 
+def stream_arguments(
+    streams: Streams,
+) -> list[str]:
+    """
+    What mpv needs to play streams we resolved ourselves instead of being
+    handed the page URL and extracting them for itself: the URLs are not a
+    page, so yt-dlp is switched off.
+
+    The picture and the sound arrive separately on most sources, so the
+    second URL is mpv's external audio track.
+
+    The headers a resolve reported are deliberately left out. Sending them
+    is what made YouTube answer `HTTP error 400 Bad Request` on the stream
+    URL, every time, where the same URL plays when mpv asks for it with its
+    own headers - so the fewer of ours on the request, the better.
+    """
+
+    arguments = ["--ytdl=no"]
+
+    if streams.video is not None and streams.audio is not None:
+
+        arguments.append(
+            f"--audio-file={streams.audio}"
+        )
+
+    return arguments
+
+
 def play_with_mpv(
     url: str,
     subtitle_path: Path | None = None,
@@ -529,7 +581,16 @@ def play_with_mpv(
     stream: bool = False,
     positions: Positions | None = None,
     subtitles: PendingSubtitles | None = None,
+    streams: Streams | None = None,
 ) -> int:
+    """
+    Play audio through mpv's own terminal output.
+
+    `streams` are the URLs our own resolve found, which save mpv the same
+    extraction. A stream mpv cannot load - sites turn one down now and then -
+    falls back to the page URL, which mpv extracts for itself, so a refusal
+    costs a retry rather than the run.
+    """
 
     mpv = mpv_path()
 
@@ -548,54 +609,84 @@ def play_with_mpv(
 
     print()
 
-    command = [
-        mpv,
-        "--no-video",
-        "--force-window=no",
-        "--cache=yes",
-    ]
+    def command_for(
+        streams: Streams | None,
+    ) -> list[str]:
 
-    if stream:
+        command = [
+            mpv,
+            "--no-video",
+            "--force-window=no",
+            "--cache=yes",
+        ]
 
-        command.extend(
-            [
-                "--ytdl=yes",
-                "--ytdl-format=bestaudio/best",
-            ]
-        )
+        if streams is None:
 
-    if subtitle_path is not None or subtitles is not None:
+            if stream:
 
-        command.extend(
-            [
-                *(
-                    [f"--sub-file={subtitle_path}"]
-                    if subtitle_path is not None
-                    else []
-                ),
+                command.extend(
+                    [
+                        "--ytdl=yes",
+                        "--ytdl-format=bestaudio/best",
+                    ]
+                )
 
-                # Print the subtitles in the terminal, and keep the
-                # status line quiet so it does not redraw them. This is
-                # set either way: a file added later is printed the same.
-                "--term-osd=force",
-                "--term-status-msg=",
-            ]
-        )
+            target = str(url)
 
-    if chapters_path is not None:
+        else:
+
+            command.extend(
+                stream_arguments(streams)
+            )
+
+            target = streams.first
+
+        if subtitle_path is not None or subtitles is not None:
+
+            command.extend(
+                [
+                    *(
+                        [f"--sub-file={subtitle_path}"]
+                        if subtitle_path is not None
+                        else []
+                    ),
+
+                    # Print the subtitles in the terminal, and keep the
+                    # status line quiet so it does not redraw them. This
+                    # is set either way: a file added later is printed the
+                    # same.
+                    "--term-osd=force",
+                    "--term-status-msg=",
+                ]
+            )
+
+        if chapters_path is not None:
+
+            command.append(
+                f"--chapters-file={chapters_path}"
+            )
 
         command.append(
-            f"--chapters-file={chapters_path}"
+            target
         )
 
-    command.append(
-        str(url)
-    )
+        return command
+
+    def rebuild() -> list[str]:
+        # The second attempt drops our streams: mpv extracts the page for
+        # itself, which is the path that always works.
+
+        return command_for(None)
 
     return run_mpv(
-        command,
+        command_for(streams),
         positions,
         subtitles,
+        rebuild=(
+            rebuild
+            if streams is not None
+            else None
+        ),
     )
 
 
@@ -607,12 +698,18 @@ def play_window(
     stream: bool = False,
     positions: Positions | None = None,
     subtitles: PendingSubtitles | None = None,
+    streams: Streams | None = None,
 ) -> int:
     """
     Play video in an mpv window, with the subtitles we produced.
 
     Terminal captions only make sense for audio: with video, mpv renders
     them itself, over the picture, using the user's own mpv settings.
+
+    `streams` are the URLs our own resolve found, which save mpv the same
+    extraction. A stream mpv cannot load - sites turn one down now and then -
+    falls back to the page URL, which mpv extracts for itself, so a refusal
+    costs a retry rather than the run.
     """
 
     mpv = mpv_path()
@@ -632,50 +729,81 @@ def play_window(
 
     print()
 
-    command = [
-        mpv,
-        "--force-window=yes",
-        (
-            f"--ytdl-format=bestvideo[height<={quality}]+bestaudio/"
-            f"best"
-        ),
-    ]
+    def command_for(
+        streams: Streams | None,
+    ) -> list[str]:
 
-    if stream:
+        command = [
+            mpv,
+            "--force-window=yes",
+        ]
+
+        if streams is None:
+
+            command.append(
+                f"--ytdl-format=bestvideo[height<={quality}]+bestaudio/"
+                f"best"
+            )
+
+            if stream:
+
+                command.append(
+                    "--ytdl=yes"
+                )
+
+            target = str(url)
+
+        else:
+
+            command.extend(
+                stream_arguments(streams)
+            )
+
+            target = streams.first
+
+        if subtitle_path is not None:
+
+            command.extend(
+                [
+                    f"--sub-file={subtitle_path}",
+                    "--sid=1",
+                ]
+            )
+
+        elif subtitles is not None:
+
+            # Ours are on the way, so nothing else should take the screen
+            # in the meantime: the file is added with `sub-add` when it
+            # lands.
+            command.append(
+                "--sid=no"
+            )
+
+        if chapters_path is not None:
+
+            command.append(
+                f"--chapters-file={chapters_path}"
+            )
 
         command.append(
-            "--ytdl=yes"
+            target
         )
 
-    if subtitle_path is not None:
+        return command
 
-        command.extend(
-            [
-                f"--sub-file={subtitle_path}",
-                "--sid=1",
-            ]
-        )
+    def rebuild() -> list[str]:
+        # The second attempt drops our streams: mpv extracts the page for
+        # itself, which is the path that always works.
 
-    elif subtitles is not None:
-
-        # Ours are on the way, so nothing else should take the screen in
-        # the meantime: the file is added with `sub-add` when it lands.
-        command.append(
-            "--sid=no"
-        )
-
-    if chapters_path is not None:
-
-        command.append(
-            f"--chapters-file={chapters_path}"
-        )
-
-    command.append(
-        str(url)
-    )
+        return command_for(None)
 
     return run_mpv(
-        command,
+        command_for(streams),
         positions,
         subtitles,
+        rebuild=(
+            rebuild
+            if streams is not None
+            else None
+        ),
     )

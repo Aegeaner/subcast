@@ -44,7 +44,8 @@ and Sarah McInerney. We're here with you until nine...
 - Python 3.10 or newer
 - `mpv` for playback, `ffmpeg`/`ffprobe` for duration probing
 - `yt-dlp` for YouTube (`pip install "subcast[youtube]"`, or your package
-  manager); mpv is pointed at the page URL and resolves it itself
+  manager); it resolves a video's streams, and mpv is handed those URLs from
+  the cache, or the page URL to resolve for itself when they are not there
 - Chromium for Playwright, used only by the RTÉ source (see below)
 - `faster-whisper` for transcription, pulled in by the `subs` extra
 
@@ -157,17 +158,21 @@ clip list, while plain `subcast` plays the same audio with the segment
 titles alone.
 
 Playing a YouTube video does not wait for any of that. mpv is handed the
-page URL and asks yt-dlp for the stream itself, so the watch link and the
-cache are all the run needs to start: the resolve, the caption download
-and (where the video has no captions) the transcription all happen beside
-the playback, and the subtitle file is handed to mpv mid-playback the
-moment it is ready. A run of several items — a feed, a playlist, a menu
-selection — prepares the next one once the current one's own preparation
-is done, so each item after the first starts without waiting either. A
-first play spends its time on the listing call and on mpv's own extraction
-— the two things that cannot be moved — and a replay spends it on mpv
-alone. RTÉ is different, and stays that way: its stream URL only comes out
-of the resolve, so that one is found before anything starts.
+page URL — or, for an item the cache already has stream URLs for, those
+URLs themselves: a replay's first frame measured 3.4s against 15-22s when
+mpv was left to extract — so the watch
+link and the cache are all the run needs to start: the resolve, the caption
+download and (where the video has no captions) the transcription all happen
+beside the playback, and the subtitle file is handed to mpv mid-playback
+the moment it is ready. A run of several items — a feed, a playlist, a menu
+selection — prepares the next one once the current one's own preparation is
+done, so each item after the first starts without waiting either. A stream
+mpv cannot load — sites refuse one every so often — is answered by handing
+it the page instead, which is where it started. A first play spends its
+time on the listing call and on mpv's own extraction — the two things that
+cannot be moved — and a replay on mpv alone. RTÉ is different, and stays
+that way: its stream URL only comes out of the resolve, so that one is found
+before anything starts.
 
 For audio, captions are drawn by the tool itself in a fixed block at
 the bottom of the terminal: a dim cyan segment title, then the line that
@@ -260,6 +265,29 @@ fights them (zoom in with `Ctrl` + `+` in kitty).
 Model sizes and speed on a mid-range GPU: `small.en` (~480 MB, about 13x
 realtime, so ~9 minutes for a two-hour show) is the default;
 `medium.en` and `large-v3-turbo` are better but noticeably slower.
+
+## mpv configuration
+
+subcast plays through the mpv you already have. It passes the flags each mode
+needs and leaves the rest of your `mpv.conf` alone, so nothing here is
+required — a stock mpv works. These are the options that do change how subcast
+behaves, with what they do about them:
+
+| Option | What it changes | Suggestion |
+| --- | --- | --- |
+| `keep-open`, `keep-open-pause` | At the end of a video, subcast asks mpv whether playback reached the end (`eof-reached`) to decide whether the position is finished with. `keep-open=yes` leaves mpv paused at the end instead of exiting, which subcast handles as well: `q` quits, and the position is dropped either way. | either |
+| `save-position-on-quit`, `watch-later-*` | mpv's own resume. subcast remembers positions itself, keyed by the item rather than by the stream URL (signed URLs change every run, so mpv's hash never matches), and passes `--start` at launch. Leaving mpv's version on means two answers to the same question. | off |
+| `cache-pause-initial`, `cache-pause-wait` | How long mpv waits for its buffer to fill before the first frame. This is the wait at the start of playback: measured on a 1080p video, generous settings cost about a third of a second, not seconds — the picture itself takes longer to arrive than the buffer does. | `no` / small, if you want the fastest start |
+| `cache-secs`, `demuxer-hysteresis-secs` | How much is buffered ahead. Deeper buffers ride out a poor connection; shallower ones start sooner and recover sooner after a stall. | yours to judge |
+| `ytdl`, `ytdl-format` | subcast sets both for anything it streams (the format is capped by `--quality`), so a global setting only applies to videos you play outside subcast. | yours |
+| `sub-auto`, `term-osd`, `term-status-msg` | Also set per run: the terminal captions turn mpv's own subtitle output and status line off, so the block keeps the bottom rows to itself. | yours |
+
+Two consequences worth knowing when playback feels slow to start: the wait is
+mpv's own yt-dlp call plus the first seconds of picture, not subcast's
+preparation (which happens beside the playback), and `--quality` is a real
+lever — a 480p start has far less to buffer than a 1080p one. The terminal
+(audio) paths have no picture to buffer at all, which is why they make a sound
+sooner than the window makes a frame.
 
 ## Where files go
 

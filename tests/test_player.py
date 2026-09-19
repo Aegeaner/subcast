@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from subcast import player
+from subcast.meta import Streams
 from subcast.subtitles import PendingSubtitles, Prepared
 
 
@@ -91,6 +92,32 @@ def test_mpv_refusing_the_file_is_said_out_loud(capsys):
     assert "invalid parameter" in capsys.readouterr().out
 
 
+def test_streams_are_handed_to_mpv_instead_of_a_page():
+    """
+    `--ytdl=no` with the URLs is what saves mpv the extraction subcast has
+    already done, and the sound is a second URL, so mpv gets it as an
+    external track. No headers go with them: sending the ones a resolve
+    reported is what made YouTube answer `HTTP error 400` on the stream URL
+    while the same URL played when mpv asked for it by itself.
+    """
+
+    assert player.stream_arguments(
+        Streams(
+            video="https://example.test/video",
+            audio="https://example.test/audio",
+        )
+    ) == [
+        "--ytdl=no",
+        "--audio-file=https://example.test/audio",
+    ]
+
+
+def test_one_url_needs_no_external_track():
+    assert player.stream_arguments(
+        Streams(video="https://example.test/both", audio=None)
+    ) == ["--ytdl=no"]
+
+
 def test_a_stream_mpv_cannot_load_is_tried_once_more():
     """
     YouTube hands out signed stream URLs that answer 403 from time to
@@ -105,6 +132,26 @@ def test_a_stream_mpv_cannot_load_is_tried_once_more():
 
     assert player.retry_load_error(play) == 0
     assert len(attempts) == 2
+
+
+def test_a_retry_builds_a_different_second_attempt():
+    """
+    A stream the site refused is played by extracting the page instead, so
+    the retry runs whatever `again` returns rather than the first command.
+    """
+
+    ran: list[str] = []
+
+    def play() -> int:
+        ran.append("first")
+        return player.LOAD_ERROR
+
+    def again() -> int:
+        ran.append("second")
+        return 0
+
+    assert player.retry_load_error(play, again=again) == 0
+    assert ran == ["first", "second"]
 
 
 def test_a_second_load_failure_is_reported_as_it_stands():
