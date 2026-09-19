@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "subcast"
-description = "Play or save the latest RTÉ Morning Ireland episode, with generated subtitles and segment titles."
+description = "Play or save episodes and videos with subtitles: published captions where a site has them, local Whisper transcription where it does not."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -19,6 +19,7 @@ keywords = [
     "whisper",
     "subtitles",
     "captions",
+    "youtube",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
