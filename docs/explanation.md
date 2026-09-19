@@ -62,6 +62,13 @@ first, then VP9, then H.264. Without that ranking a height filter alone lands on
 YouTube's 1080p premium HLS rendition, which is several times the bitrate of the
 DASH formats beside it.
 
+A broadcast is the exception, and has nothing to rank: it is HLS and nothing
+else, while it airs and after it ends, so a request that keeps yt-dlp off HLS
+matches none of its formats and comes back as `Requested format is not
+available`. Subcast asks for the best format the broadcast has as well, after
+that filtered request, so a broadcast plays and a video still plays from its
+DASH formats.
+
 Subcast does not send HTTP headers to a googlevideo URL. Passing yt-dlp's
 reported browser headers as `--http-header-fields` makes YouTube answer HTTP
 400 every time, while the same URL plays with no headers at all.

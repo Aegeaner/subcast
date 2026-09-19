@@ -49,6 +49,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   format, so `bestaudio/best` was falling back to the whole 1080p stream
   (5421k against 144p's 290k, measured on the same broadcast).
 
+### Fixed
+
+- **Broadcasts play again.** What subcast asked mpv for kept yt-dlp off
+  YouTube's HLS renditions (`[protocol^=https]`), and a broadcast is HLS and
+  nothing else - while it airs and after it ends - so the request matched none
+  of its formats: `Requested format is not available`, mpv exit status 2, and
+  nothing played, live or on a replay of the broadcast. The same request
+  without the filter now follows the filtered one, so a video is still played
+  from its DASH formats and a broadcast from what it has.
+
 ## [0.2.0] - 2026-09-19
 
 ### Added

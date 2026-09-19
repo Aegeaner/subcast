@@ -175,6 +175,11 @@ def test_the_format_argument_stays_off_hls(monkeypatch, capsys):
     (4600k, measured) where the DASH formats beside it are 1417k and 2130k
     - and the wait before the first frame on this path is mpv filling its
     cache, so the bitrate is the wait.
+
+    The same request without the filter follows it: a broadcast has HLS
+    and nothing else, so the filter matches none of its formats and mpv's
+    own yt-dlp run answers "Requested format is not available" instead of
+    falling through to the `/best` after it.
     """
 
     monkeypatch.setattr(player, "mpv_path", lambda: "mpv")
@@ -190,7 +195,7 @@ def test_the_format_argument_stays_off_hls(monkeypatch, capsys):
 
     assert (
         "--ytdl-format=bestvideo[height<=1080][protocol^=https]"
-        "+bestaudio/best"
+        "+bestaudio/bestvideo[height<=1080]+bestaudio/best"
     ) in commands[0]
 
 

@@ -961,12 +961,19 @@ def play_window(
             # it are 1417k (AV1) and 2130k (VP9) - measured on the video
             # from the report. The wait before the first frame here is
             # mpv filling its cache, so it is that bitrate the wait is
-            # made of; `/best` is the fallback for a source that offers
-            # nothing else.
+            # made of.
+            #
+            # A broadcast has HLS and nothing else - while it airs and
+            # after it ends - so that filter matches none of its formats
+            # and yt-dlp answers "Requested format is not available",
+            # which is a run that plays nothing. The same request without
+            # the filter is what plays one; `/best` is the fallback for a
+            # source that offers neither.
             #
             command.append(
                 f"--ytdl-format=bestvideo[height<={quality}]"
                 f"[protocol^=https]+bestaudio/"
+                f"bestvideo[height<={quality}]+bestaudio/"
                 f"best"
             )
 
