@@ -15,7 +15,6 @@ import re
 from html import unescape
 from pathlib import Path
 
-
 # A timing line. Cue settings ("align:start position:0%") trail the end
 # timestamp, so they are simply not part of the match.
 _TIMING = re.compile(

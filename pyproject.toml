@@ -47,7 +47,10 @@ youtube = ["yt-dlp>=2024.1.1"]
 dev = [
     "build>=1.2",
     "pytest>=8",
-    "ruff>=0.6",
+    # Pinned: ruff adds rules to its default set between releases, so an
+    # unpinned linter turns a green branch red without a code change.
+    # Bumping this is a deliberate, reviewable change.
+    "ruff==0.16.8",
     "twine>=5",
 ]
 

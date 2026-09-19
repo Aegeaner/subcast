@@ -10,7 +10,6 @@ from subcast.sources.rte import (
     find_episode_clips,
 )
 
-
 FIXTURE = (
     Path(__file__).parent
     / "fixtures"

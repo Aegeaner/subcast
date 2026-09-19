@@ -9,12 +9,16 @@ from urllib.parse import urljoin, urlsplit
 
 import requests
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import (
+    Error as PlaywrightError,
+)
+from playwright.sync_api import (
+    sync_playwright,
+)
 
 from ..media import sanitize_filename
 from ..segments import clip_start_from_title
 from . import Media, Segment
-
 
 SHOW_URL = (
     "https://www.rte.ie/radio/radio1/morning-ireland/"
@@ -35,7 +39,7 @@ EPISODE_RE = re.compile(
     r"/radio/radio1/morning-ireland/episodes/"
     r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
     r"[0-9a-f]{4}-[0-9a-f]{12})/?$",
-    re.I,
+    re.IGNORECASE,
 )
 
 def http_get(
@@ -170,14 +174,14 @@ def extract_episode_title(
                 r"\s*\|\s*Morning Ireland.*$",
                 "",
                 text,
-                flags=re.I,
+                flags=re.IGNORECASE,
             ).strip()
 
             text = re.sub(
                 r"\s+-\s+RTÉ Radio 1.*$",
                 "",
                 text,
-                flags=re.I,
+                flags=re.IGNORECASE,
             ).strip()
 
             if text:
@@ -484,7 +488,7 @@ def resolve_audio(
                 timeout=20_000,
             )
 
-        except Exception as exc:
+        except PlaywrightError as exc:
             print(
                 f"    Navigation notice: {exc}",
                 flush=True,
@@ -549,10 +553,11 @@ def resolve_audio(
                         flush=True,
                     )
 
-                except Exception:
+                except (PlaywrightError, AttributeError, RuntimeError):
+                    # Not every control can be inspected; skip it.
                     pass
 
-        except Exception as exc:
+        except PlaywrightError as exc:
 
             print(
                 f"    Control inspection failed: {exc}",
@@ -626,13 +631,15 @@ def resolve_audio(
                         clicked = True
                         break
 
-                    except Exception:
+                    except (PlaywrightError, AttributeError, RuntimeError):
+                        # Not clickable; try the next control.
                         continue
 
                 if clicked:
                     break
 
-            except Exception:
+            except (PlaywrightError, AttributeError, RuntimeError):
+                # The selector could not be used; try the next one.
                 continue
 
         # ------------------------------------------------------------
@@ -659,8 +666,12 @@ def resolve_audio(
 
                 clicked = True
 
-            except Exception:
-                pass
+            except PlaywrightError as exc:
+
+                print(
+                    f"    Keyboard activation failed: {exc}",
+                    flush=True,
+                )
 
         # ------------------------------------------------------------
         # Final fallback: center click.
@@ -682,8 +693,12 @@ def resolve_audio(
 
                 clicked = True
 
-            except Exception:
-                pass
+            except PlaywrightError as exc:
+
+                print(
+                    f"    Center click failed: {exc}",
+                    flush=True,
+                )
 
         if clicked:
 
@@ -771,7 +786,7 @@ def resolve_audio(
                         "performance",
                     )
 
-        except Exception as exc:
+        except PlaywrightError as exc:
 
             print(
                 f"    Performance inspection failed: {exc}",
@@ -806,7 +821,12 @@ def resolve_audio(
                         "dom",
                     )
 
-        except Exception:
+        except (
+            PlaywrightError,
+            AttributeError,
+            TypeError,
+        ):
+            # A frame without media is not an error; try the next one.
             pass
 
         # ------------------------------------------------------------

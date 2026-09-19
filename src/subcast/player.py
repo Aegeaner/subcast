@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+
 def mpv_path() -> str:
     """
     Absolute path to mpv, or a RuntimeError explaining it is missing.
@@ -127,8 +128,10 @@ def play_window(
     command = [
         mpv,
         "--force-window=yes",
-        f"--ytdl-format=bestvideo[height<={quality}]+bestaudio/"
-        f"bestvideo[height<={quality}]+bestaudio/best",
+        (
+            f"--ytdl-format=bestvideo[height<={quality}]+bestaudio/"
+            f"bestvideo[height<={quality}]+bestaudio/best"
+        ),
     ]
 
     if stream:

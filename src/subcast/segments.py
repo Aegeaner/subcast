@@ -6,7 +6,6 @@ import json
 import re
 from pathlib import Path
 
-
 # Morning Ireland airs 07:00-09:00 and the podcast audio starts with the
 # 7am bulletin, so a published clock time ("8am News Bulletin") maps onto
 # an audio offset by subtracting this hour.
@@ -27,7 +26,7 @@ def clip_start_from_title(
     match = re.match(
         r"\s*(\d{1,2})(?:[.:](\d{2}))?\s*([ap]m)\b",
         title,
-        flags=re.I,
+        flags=re.IGNORECASE,
     )
 
     if not match:

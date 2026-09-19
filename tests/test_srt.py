@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import textwrap
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -109,7 +110,7 @@ def test_long_cues_are_split_into_two_line_pieces():
     assert fitted[-1][1] == 21.0
     assert all(
         first[1] == pytest.approx(second[0])
-        for first, second in zip(fitted, fitted[1:])
+        for first, second in pairwise(fitted)
     )
 
 

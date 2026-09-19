@@ -12,8 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from subcast.sources import Captions, Media, Segment
-from subcast.sources import youtube
+from subcast.sources import Captions, Media, Segment, youtube
 from subcast.sources.youtube import (
     SOURCE,
     audio_download,
@@ -23,7 +22,6 @@ from subcast.sources.youtube import (
     yt_dlp_available,
     yt_dlp_json,
 )
-
 
 WATCH = "https://www.youtube.com/watch?v="
 

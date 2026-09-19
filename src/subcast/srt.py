@@ -6,7 +6,6 @@ import json
 import textwrap
 from pathlib import Path
 
-
 # Columns per caption line: one terminal line, kept short enough to read
 # without moving your eyes across the screen.
 LINE_WIDTH = 42
@@ -14,9 +13,7 @@ LINE_WIDTH = 42
 def srt_timestamp(
     seconds: float,
 ) -> str:
-    milliseconds = int(
-        round(seconds * 1000)
-    )
+    milliseconds = round(seconds * 1000)
 
     hours, milliseconds = divmod(
         milliseconds,
