@@ -1,0 +1,24 @@
+<!--
+  Synthetic episode page used by the parser tests.
+
+  The real RTÉ page embeds the segment list in a script block and carries
+  several other `var ... = [ ... ]` blocks before it, which is why
+  find_episode_clips() picks the block next to the marker rather than the
+  first one it sees. Both properties are reproduced here, with invented
+  titles and durations instead of RTÉ's markup.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Morning Ireland - 18 September 2026</title>
+</head>
+<body>
+<script>
+    var ads = [{"slot": "preroll", "seconds": 30}];
+    var clips = [{"title": "7.10am It Says in the Papers", "duration": 183000, "description": "<p>Presented by A. Presenter.</p>", "unescape_description": "<p>Presented by A. Presenter.</p>", "clip_id": "00000000-0000-4000-8000-000000000001", "is_clip": true, "content_type": "clip", "url": "/radio/radio1/clips/00000000-0000-4000-8000-000000000001/"}, {"title": "Taoiseach to meet Burnham", "duration": 310000, "description": "<p>Reporter reports from Manchester.</p>", "unescape_description": "<p>Reporter reports from Manchester.</p>", "clip_id": "00000000-0000-4000-8000-000000000002", "is_clip": true, "content_type": "clip", "url": "/radio/radio1/clips/00000000-0000-4000-8000-000000000002/"}, {"title": "EU propose under-18's chatbot ban", "duration": 362000, "description": "<p>Outlines what the EU Kids Act proposes.</p>", "unescape_description": "<p>Outlines what the EU Kids Act proposes.</p>", "clip_id": "00000000-0000-4000-8000-000000000003", "is_clip": true, "content_type": "clip", "url": "/radio/radio1/clips/00000000-0000-4000-8000-000000000003/"}, {"title": "7.35am Sports News", "duration": 341000, "description": "<p>Presented by B. Presenter.</p>", "unescape_description": "<p>Presented by B. Presenter.</p>", "clip_id": "00000000-0000-4000-8000-000000000004", "is_clip": true, "content_type": "clip", "url": "/radio/radio1/clips/00000000-0000-4000-8000-000000000004/"}, {"title": "8am News Bulletin", "duration": 367000, "description": "<p>Presented by C. Presenter.</p>", "unescape_description": "<p>Presented by C. Presenter.</p>", "clip_id": "00000000-0000-4000-8000-000000000005", "is_clip": true, "content_type": "clip", "url": "/radio/radio1/clips/00000000-0000-4000-8000-000000000005/"}];
+    var title = "Episode Clips";
+</script>
+<link rel="alternate" href="https://www.rte.ie/radio/radio1/podcast/podcast_morningireland.xml">
+</body>
+</html>
