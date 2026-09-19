@@ -297,6 +297,121 @@ def test_an_item_that_must_be_resolved_is_ready_before_playback(monkeypatch):
     assert job.wait() is PREPARED
 
 
+def test_the_next_item_is_prepared_while_this_one_plays(monkeypatch):
+    """
+    A feed or a playlist is watched one item after another, so the run
+    gets the following item ready during the current one - but not both at
+    once: the next preparation waits for this one's.
+    """
+
+    current_done = threading.Event()
+    order: list[str] = []
+
+    def resolve(source, item):
+        order.append(item.key)
+        return item
+
+    def prepare(media, args, saved):
+        if media.key == "abc":
+            current_done.wait(timeout=5)
+        return PREPARED
+
+    monkeypatch.setattr(cli, "resolve_item", resolve)
+    monkeypatch.setattr(cli, "prepare_item", prepare)
+    monkeypatch.setattr(cli, "wants_subtitles", lambda media, args: True)
+
+    current = cli.start_preparation(Source(), media(), args(), None)
+
+    following = replace(media(), key="def", title="The next one")
+    next_job = cli.start_preparation(
+        Source(),
+        following,
+        args(),
+        None,
+        after=current,
+    )
+
+    # the next item has not started asking: this one has not finished
+    assert next_job.done_yet() is False
+
+    current_done.set()
+
+    assert next_job.wait() is PREPARED
+    assert order == ["abc", "def"]
+
+
+def test_a_listing_is_played_item_after_item(monkeypatch):
+    """
+    The whole loop, because this is where the pieces are joined: both
+    items play in turn, and the second one's preparation is already going
+    when the first one starts - which a feed or a playlist is for.
+    """
+    import argparse as argparse_module
+
+    first = replace(media(), key="one", title="The first")
+    second = replace(media(), key="two", title="The second")
+    order: list[str] = []
+
+    monkeypatch.setattr(
+        cli,
+        "parse_args",
+        lambda: argparse_module.Namespace(
+            url="https://www.youtube.com/@The_RHS",
+            list=False,
+            limit=2,
+            feed="rhs",
+            search="",
+            feeds=False,
+            add_feed=False,
+            name="",
+            remove_feed="",
+            pick=False,
+            save=False,
+            no_play=False,
+            audio_only=False,
+            quality=1080,
+            subs=False,
+            subs_from="auto",
+            whisper_model="small.en",
+            whisper_device="auto",
+            subs_scale="auto",
+            subs_style="auto",
+            resume=True,
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "resolve_target",
+        lambda args: cli.Target(Source(), "rhs", "rhs"),
+    )
+    monkeypatch.setattr(cli, "collect", lambda source, url, limit: [first, second])
+    monkeypatch.setattr(cli, "resolve_item", lambda source, item: item)
+    monkeypatch.setattr(cli, "wants_subtitles", lambda media, args: True)
+
+    def prepare(media, args, saved):
+        order.append(f"prepared {media.key}")
+        return PREPARED
+
+    monkeypatch.setattr(cli, "prepare_item", prepare)
+    monkeypatch.setattr(cli, "saved_positions", lambda media, args: None)
+    monkeypatch.setattr(cli, "chapters_for", lambda media: None)
+
+    def play(media, args, subtitles):
+        assert subtitles.wait() is PREPARED
+        order.append(f"played {media.key}")
+        return 0
+
+    monkeypatch.setattr(cli, "play_item", play)
+
+    assert cli.main() == 0
+    assert order == [
+        "prepared one",
+        "prepared two",
+        "played one",
+        "played two",
+    ]
+
+
 def test_chapters_come_from_what_a_previous_run_left(monkeypatch, tmp_path):
     monkeypatch.setattr(
         cli,

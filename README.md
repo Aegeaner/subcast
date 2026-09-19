@@ -152,11 +152,13 @@ page URL and asks yt-dlp for the stream itself, so the watch link and the
 cache are all the run needs to start: the resolve, the caption download
 and (where the video has no captions) the transcription all happen beside
 the playback, and the subtitle file is handed to mpv mid-playback the
-moment it is ready. A first play spends its time on the listing call and
-on mpv's own extraction — the two things that cannot be moved — and a
-replay spends it on mpv alone. RTÉ is different, and stays that way: its
-stream URL only comes out of the resolve, so that one is found before
-anything starts.
+moment it is ready. A run of several items — a feed, a playlist, a menu
+selection — prepares the next one once the current one's own preparation
+is done, so each item after the first starts without waiting either. A
+first play spends its time on the listing call and on mpv's own extraction
+— the two things that cannot be moved — and a replay spends it on mpv
+alone. RTÉ is different, and stays that way: its stream URL only comes out
+of the resolve, so that one is found before anything starts.
 
 For audio, captions are drawn by the tool itself in a fixed block at
 the bottom of the terminal: a dim cyan segment title, then the line that

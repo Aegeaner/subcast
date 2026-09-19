@@ -782,6 +782,7 @@ def start_preparation(
     item: Media,
     args: argparse.Namespace,
     saved_path: Path | None,
+    after: PendingSubtitles | None = None,
 ) -> PendingSubtitles:
     """
     Resolve and prepare an item beside the playback that is already going.
@@ -789,9 +790,17 @@ def start_preparation(
     This is what makes a YouTube run start in seconds: the resolve (2-5s)
     and the transcript are the only things subcast needs, and neither is
     needed to play - mpv is handed the page URL and asks yt-dlp itself.
+
+    `after` is the preparation this one waits for before starting, which is
+    how the item after the one playing is worked out without two of them
+    asking YouTube at once.
     """
 
     def work() -> Prepared | None:
+
+        if after is not None:
+
+            after.wait()
 
         media = resolve_item(
             source,
@@ -983,6 +992,8 @@ def main() -> int:
 
             print()
 
+        ahead: dict[str, PendingSubtitles] = {}
+
         for index, item in enumerate(items, start=1):
 
             position = (
@@ -997,21 +1008,26 @@ def main() -> int:
             )
 
             watching = not (args.no_play or args.save)
-            ahead = plays_while_preparing(item, watching)
+            beside = plays_while_preparing(item, watching)
 
             media = item
             subtitles: PendingSubtitles | None = None
 
-            if ahead:
+            if beside:
 
                 # The listing's own title and length are all playback
-                # needs; the resolve and the subtitles happen beside it.
-                subtitles = start_preparation(
-                    target.source,
-                    item,
-                    args,
-                    saved_path=None,
-                )
+                # needs; the resolve and the subtitles happen beside it -
+                # or already did, for the item after the last one.
+                subtitles = ahead.pop(item.key, None)
+
+                if subtitles is None:
+
+                    subtitles = start_preparation(
+                        target.source,
+                        item,
+                        args,
+                        saved_path=None,
+                    )
 
             else:
 
@@ -1065,7 +1081,7 @@ def main() -> int:
                     flush=True,
                 )
 
-            if not ahead:
+            if not beside:
 
                 subtitles = ready_subtitles(
                     media,
@@ -1085,6 +1101,27 @@ def main() -> int:
                 f"\n[3/3] Playing{position}:",
                 flush=True,
             )
+
+            following = (
+                items[index]
+                if index < len(items)
+                else None
+            )
+
+            if following is not None and plays_while_preparing(
+                following,
+                watching,
+            ):
+
+                # Watched next, so it is worked out now: by the time this
+                # item ends, the next one is ready to start.
+                ahead[following.key] = start_preparation(
+                    target.source,
+                    following,
+                    args,
+                    saved_path=None,
+                    after=subtitles,
+                )
 
             status = play_item(
                 media,

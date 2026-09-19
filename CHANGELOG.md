@@ -56,6 +56,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Following a feed, playing a playlist or taking several entries from a
+  menu prepares the next item while the current one plays: the item after
+  this one is resolved and captioned as soon as this one's own preparation
+  is done, so every item after the first starts without waiting either.
+  Only where mpv resolves the source's URL itself, and only when something
+  is being watched.
 - Playback no longer waits for the subtitles. Where mpv resolves the
   source's URL itself (YouTube), the resolve and the transcript now happen
   beside the playback: mpv starts as soon as the listing says what to
