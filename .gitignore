@@ -7,3 +7,8 @@ dist/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+
+# The feeds list is the user's, not the project's: subcast writes it to
+# ~/.config/subcast/feeds.json, and one kept beside the code must not be
+# committed either.
+feeds.json

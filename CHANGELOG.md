@@ -20,6 +20,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its own captions is prepared and played with them without `--subs` (ASR
   tracks included), and `--subs` is left for the local transcription that
   sources without captions - RTÉ - need.
+- **Feeds**: `--add-feed` saves a YouTube playlist or channel into
+  `$XDG_CONFIG_HOME/subcast/feeds.json`, named after the listing itself or
+  by `--name`; `--feeds` lists them, and `--feed NAME` (or `--feed 2`)
+  opens one the way a podcast client does - the newest entries as a
+  numbered menu to choose from. `--no-pick` plays the newest straight
+  through instead, and `--remove-feed` forgets one. Not podcast RSS: a
+  short list of the listings you follow, and the file is yours, so it stays
+  out of the checkout.
+- **Searching and a picker for long listings**: `--search QUERY` turns a
+  YouTube search into a listing, and `--pick` prints a listing and takes
+  `3`, `2,5-7` or `all` from it before anything is prepared or played. A
+  menu shows the newest `SUBSCAST_LIMIT` entries (30 by default) rather
+  than paging a whole channel: `--limit N` asks for another number and
+  `--limit 0` for all of them.
 - **YouTube chapters** become the segments, used exactly as published, so
   nothing is guessed: the block shows the chapter you are in.
 - A `sources` layer: sources hand the pipeline a `Media` record (what to
@@ -48,6 +62,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The CLI takes an optional URL instead of only talking to RTÉ; with no URL
   it still plays the latest Morning Ireland. `--subs` now means "transcribe
   where the source has none" rather than "produce subtitles at all".
+- `--list` prints a page of the listing now — the newest 30, or `--limit N`
+  — instead of the single entry playback would have stopped at.
 
 ### Fixed
 

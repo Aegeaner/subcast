@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
-from . import captionbar
+from . import captionbar, config, feeds, picker
 from .config import DEFAULT_WHISPER_MODEL, cache_dir, save_dir
 from .media import acquire, download_audio, sanitize_filename
 from .player import Positions, play_window, play_with_mpv
@@ -17,7 +18,6 @@ from .subtitles import (
     has_transcript,
     prepare,
 )
-
 
 def caption_style(
     args: argparse.Namespace,
@@ -79,11 +79,88 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--limit",
         type=int,
-        default=1,
+        default=None,
         metavar="N",
         help=(
             "How many entries of a playlist or show listing to play, "
-            "newest first (default: 1, 0 means all)."
+            "newest first (default: 1, 0 means all). A menu (--list, "
+            "--pick, --feed) shows the newest "
+            f"{config.list_limit()} unless N says otherwise."
+        ),
+    )
+
+    sources = parser.add_mutually_exclusive_group()
+
+    sources.add_argument(
+        "--feed",
+        metavar="NAME",
+        default="",
+        help=(
+            "Open a saved feed by name (or by its number in --feeds): "
+            "its entries are listed and you choose what to play."
+        ),
+    )
+
+    sources.add_argument(
+        "--search",
+        metavar="QUERY",
+        default="",
+        help=(
+            "Search YouTube, and play or pick from the results instead "
+            "of a URL."
+        ),
+    )
+
+    parser.add_argument(
+        "--feeds",
+        action="store_true",
+        help="List the saved feeds and exit.",
+    )
+
+    parser.add_argument(
+        "--add-feed",
+        action="store_true",
+        help=(
+            "Save the URL (a YouTube playlist or channel) as a feed, "
+            "named by --name or after the listing itself."
+        ),
+    )
+
+    parser.add_argument(
+        "--name",
+        metavar="NAME",
+        default="",
+        help="The name --add-feed saves the feed under.",
+    )
+
+    parser.add_argument(
+        "--remove-feed",
+        metavar="NAME",
+        default="",
+        help="Forget the feed called NAME.",
+    )
+
+    choosing = parser.add_mutually_exclusive_group()
+
+    choosing.add_argument(
+        "--pick",
+        dest="pick",
+        action="store_true",
+        default=None,
+        help=(
+            "Print the listing and choose what to play from it - by "
+            "number, a range such as 5-7, or 'all'. A saved --feed is "
+            "opened this way whether or not this is given."
+        ),
+    )
+
+    choosing.add_argument(
+        "--no-pick",
+        dest="pick",
+        action="store_false",
+        default=None,
+        help=(
+            "Play without asking: the newest entry, or --limit of them."
         ),
     )
 
@@ -222,6 +299,181 @@ def source_for(
     return detect(url)
 
 
+def play_limit(
+    args: argparse.Namespace,
+) -> int:
+    """
+    How many entries of a listing playback walks through: one, unless
+    --limit says otherwise (0 meaning all of them).
+    """
+
+    return 1 if args.limit is None else args.limit
+
+
+def browsing(
+    args: argparse.Namespace,
+) -> bool:
+    """
+    Whether the listing is shown rather than played straight through.
+
+    --list prints it and stops, --pick prints it and plays what is chosen,
+    and a saved feed is opened that way: a feed is the listing you keep in
+    order to come back to it, so opening one shows what is in it. --no-pick
+    plays a feed's newest entry without being asked, and a URL plays what
+    it points at, as it always did.
+    """
+
+    if args.list:
+
+        return True
+
+    if args.pick is None:
+
+        return bool(args.feed)
+
+    return bool(args.pick)
+
+
+def fetch_limit(
+    args: argparse.Namespace,
+) -> int:
+    """
+    How many entries to fetch from the source.
+
+    Browsing wants the listing itself - the picker chooses from what was
+    fetched, and --list prints what was fetched - so it asks for
+    config.list_limit() entries, or for as many as --limit names (0 for
+    all of them). Playing asks for what it will play and no more.
+    """
+
+    if browsing(args):
+
+        return (
+            config.list_limit()
+            if args.limit is None
+            else args.limit
+        )
+
+    return play_limit(args)
+
+
+class Target(NamedTuple):
+    """
+    What a run works on, and the line that says which it is.
+    """
+
+    source: Source
+    url: str
+    description: str
+
+
+def resolve_target(
+    args: argparse.Namespace,
+) -> Target:
+    """
+    What to work on: a URL, a saved feed or a YouTube search.
+    """
+
+    if args.search:
+
+        from .sources import youtube
+
+        # As much of the results as this run will use: the top hit when
+        # playback is the only thing asked for, a menu's page when it is
+        # going to be browsed.
+        count = fetch_limit(args) or config.list_limit()
+
+        return Target(
+            youtube.SOURCE,
+            youtube.search_url(args.search, count),
+            f'search "{args.search}"',
+        )
+
+    if args.feed:
+
+        feed = feeds.find(args.feed)
+
+        return Target(
+            detect(feed.url),
+            feed.url,
+            f"{feed.name}: {feed.url}",
+        )
+
+    return Target(
+        source_for(args.url),
+        args.url,
+        args.url or "latest",
+    )
+
+
+def show_feeds() -> int:
+    """
+    The saved feeds, in the order they were added.
+    """
+
+    saved = feeds.load()
+
+    if not saved:
+
+        print(
+            "    No feeds saved; add one with: "
+            "subcast <url> --add-feed"
+        )
+
+        return 0
+
+    for number, feed in enumerate(saved, start=1):
+
+        print(
+            f"  {number:>3}. {feed.name}  {feed.url}"
+        )
+
+    return 0
+
+
+def remember_feed(
+    args: argparse.Namespace,
+) -> int:
+    """
+    Save the URL as a feed, named by --name or after the listing.
+    """
+
+    if not args.url:
+
+        raise RuntimeError(
+            "--add-feed needs a URL: subcast <url> --add-feed"
+        )
+
+    name = args.name or feeds.title_for(args.url)
+
+    feeds.add(name, args.url)
+
+    print(
+        f"    Feed: {name}\n"
+        f"    {args.url}",
+        flush=True,
+    )
+
+    return 0
+
+
+def forget_feed(
+    name: str,
+) -> int:
+    """
+    Drop a saved feed.
+    """
+
+    feeds.remove(name)
+
+    print(
+        f"    Forgot: {name}",
+        flush=True,
+    )
+
+    return 0
+
+
 def collect(
     source: Source,
     url: str,
@@ -275,13 +527,8 @@ def show_listing(
 
     for index, item in enumerate(items, start=1):
 
-        duration = format_duration(
-            item.duration
-        )
-
         print(
-            f"  {index:>3}. {item.title}"
-            + (f"  [{duration}]" if duration else "")
+            picker.listing_line(index, item)
         )
 
 
@@ -472,21 +719,33 @@ def main() -> int:
 
     try:
 
-        source = source_for(args.url)
+        if args.feeds:
+
+            return show_feeds()
+
+        if args.remove_feed:
+
+            return forget_feed(args.remove_feed)
+
+        if args.add_feed:
+
+            return remember_feed(args)
+
+        target = resolve_target(args)
 
         print(
-            f"[1/3] Finding items ({source.name}):",
+            f"[1/3] Finding items ({target.source.name}):",
             flush=True,
         )
 
         items = collect(
-            source,
-            args.url,
-            args.limit,
+            target.source,
+            target.url,
+            fetch_limit(args),
         )
 
         print(
-            f"    {args.url or 'latest'}"
+            f"    {target.description}"
         )
 
         print(
@@ -496,9 +755,26 @@ def main() -> int:
 
         if args.list:
 
-            show_listing(source, items)
+            show_listing(target.source, items)
 
             return 0
+
+        if browsing(args):
+
+            print()
+
+            items = picker.choose(items)
+
+            if not items:
+
+                print(
+                    "    Nothing chosen.",
+                    flush=True,
+                )
+
+                return 0
+
+            print()
 
         for index, item in enumerate(items, start=1):
 
@@ -513,7 +789,7 @@ def main() -> int:
                 flush=True,
             )
 
-            media = source.resolve(item)
+            media = target.source.resolve(item)
 
             print(
                 f"    {media.title}"

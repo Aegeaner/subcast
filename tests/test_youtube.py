@@ -17,6 +17,7 @@ from subcast.sources.youtube import (
     SOURCE,
     audio_download,
     flatten_url,
+    listing_title,
     parse_entries,
     parse_media,
     yt_dlp_available,
@@ -691,3 +692,36 @@ def test_a_caption_download_that_fails_reports_what_yt_dlp_said(
         )
 
     assert "Unable to download video subtitles" in str(error.value)
+
+
+def test_a_channel_listing_is_named_after_the_channel(monkeypatch):
+    fake_yt_dlp(
+        monkeypatch,
+        result='{"title": "BBC News - Videos", "entries": []}',
+    )
+
+    assert (
+        listing_title("https://www.youtube.com/@BBCNews")
+        == "BBC News"
+    )
+
+
+def test_a_playlist_is_named_after_itself(monkeypatch):
+    fake_yt_dlp(
+        monkeypatch,
+        result='{"title": "Morning Ireland clips", "entries": []}',
+    )
+
+    assert (
+        listing_title("https://www.youtube.com/playlist?list=PL1")
+        == "Morning Ireland clips"
+    )
+
+
+def test_a_listing_without_a_title_says_so(monkeypatch):
+    fake_yt_dlp(monkeypatch, result='{"entries": []}')
+
+    with pytest.raises(RuntimeError) as error:
+        listing_title("https://www.youtube.com/@BBCNews")
+
+    assert "playlist or channel" in str(error.value)

@@ -45,6 +45,9 @@ LISTING_ROOTS = (
 
 WATCH_URL = "https://www.youtube.com/watch?v="
 
+# What yt-dlp is asked for a search: "ytsearch20:morning ireland".
+SEARCH_URL = "ytsearch{count}:{query}"
+
 MISSING_MESSAGE = (
     "yt-dlp is required for YouTube support; "
     "install it (e.g. pipx install yt-dlp) or use --source rte"
@@ -165,6 +168,57 @@ class Youtube:
 
 
 SOURCE = Youtube()
+
+
+def search_url(
+    query: str,
+    count: int,
+) -> str:
+    """
+    A search, as the URL yt-dlp understands it.
+    """
+
+    return SEARCH_URL.format(
+        count=max(count, 1),
+        query=query,
+    )
+
+
+def listing_title(
+    url: str,
+) -> str:
+    """
+    What a listing calls itself: the playlist or channel name.
+
+    A channel listing says what it lists ("BBC News - Videos"), which is
+    noise in a feed's name, so that tail comes off.
+    """
+
+    payload = yt_dlp_json(
+        flatten_url(url),
+        limit=1,
+        flat=True,
+    )
+
+    title = payload.get("title")
+
+    if not isinstance(title, str) or not title.strip():
+
+        raise RuntimeError(
+            f"{url} does not name a playlist or channel"
+        )
+
+    named = title.strip()
+
+    for tail in LISTING_TAILS:
+
+        suffix = f" - {tail.title()}"
+
+        if named.lower().endswith(suffix.lower()):
+
+            return named[: -len(suffix)].strip() or named
+
+    return named
 
 
 def yt_dlp_available() -> bool:

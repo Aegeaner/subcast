@@ -107,7 +107,36 @@ subcast --save --subs          # keep a transcript with it
 subcast <url> --subs-from asr  # ignore published captions, transcribe
 subcast <url> --quality 720    # cap the video height
 subcast --whisper-model medium.en --whisper-device cpu
+subcast <url> --pick           # choose entries from a long listing
+subcast --search "keyword"     # search YouTube, then pick from the hits
+subcast <url> --add-feed       # save a playlist or channel as a feed
+subcast --feeds                # what feeds are saved
+subcast --feed bbc             # open a saved feed: a menu, then play a pick
+subcast --feed bbc --no-pick   # play the newest entry instead
+subcast --remove-feed bbc      # forget one
 ```
+
+Long listings are browsed rather than guessed at: `--list` prints the
+listing, `--pick` prints it and takes an answer — `3`, `2,5-7`, `all`, or
+Enter to walk away — before anything is prepared or played. A menu shows
+the newest 30 entries: enough to choose from, and little enough that
+opening a channel with thousands of videos is not a wait. `--limit N` asks
+for another number and `--limit 0` for the lot, and `SUBSCAST_LIMIT`
+changes what the default is. `--search QUERY` turns a YouTube search into
+such a listing — the top hit when it is only going to be played, a menu's
+page when it is going to be browsed — so searching is `subcast --search
+"morning ireland" --pick` and `subcast --search "morning ireland"` just
+plays the first result.
+
+Feeds are that idea kept: `subcast <url> --add-feed` remembers a YouTube
+playlist or channel — named after itself, or by `--name` — and `--feed
+<name>` (or `--feed 2`, by its number in `--feeds`) opens it the way a
+podcast client opens a feed: the newest entries are printed as a numbered
+menu and you type which to play — `3`, `2,5-7`, `all`, or Enter to walk
+away. `--no-pick` plays the newest entry without asking, and everything a
+URL takes applies to a feed too: `--subs`, `--save`, `--audio-only`,
+resume. This is not podcast RSS: it is a short list of the listings you
+follow, kept in your own config file.
 
 Captions a source already publishes come with it, no flag needed: a
 YouTube video arrives with the captions it has (seconds, no GPU), and a
@@ -218,6 +247,7 @@ realtime, so ~9 minutes for a two-hour show) is the default;
 | Subtitles | `$XDG_CACHE_HOME/subcast/<source>/<id>.{srt,chapters.txt}` |
 | Cache | `$XDG_CACHE_HOME/subcast/<source>/<id>.{mp3,mp4,cues.json,segments.json}` |
 | Playback position | `$XDG_CACHE_HOME/subcast/<source>/<id>.position` |
+| Feeds | `$XDG_CONFIG_HOME/subcast/feeds.json` — the one file here that is the user's rather than the tool's |
 
 The cache is keyed by the item's own id (an episode UUID, a video id). The
 transcript (`cues.json`) and the placed segment list (`segments.json`) are
@@ -245,17 +275,16 @@ sending a pull request.
 
 Done in 0.2.0: the `sources` layer, YouTube (videos, playlists, channels),
 published captions preferred over transcription, chapters as segments,
-`--list`/`--limit`/`--save` for lists, and video playback in an mpv window.
+`--list`/`--limit`/`--save` for lists, video playback in an mpv window,
+saved feeds, and searching with a picker for long listings.
 
 Next:
 
 1. **Local files and arbitrary URLs** as sources, with `ffprobe` for
    duration and sidecar subtitles picked up automatically.
-2. **RSS feeds** (the reference point is `podcast.sh`, which handles them
-   alongside YouTube) so a podcast feed can be played like a playlist.
-3. **Searching and browsing**: a picker for long listings, instead of
-   `--limit` and `--list`.
-4. **Per-source options** worth having: cookies for age-restricted videos,
+2. **Podcast RSS**: real feeds alongside the saved YouTube listings, so a
+   podcast can be played like a playlist.
+3. **Per-source options** worth having: cookies for age-restricted videos,
    a preferred caption language, audio-only formats for `--save`.
 
 Feature requests that map onto one of these are welcome; see the issue
@@ -276,6 +305,9 @@ templates.
   separate program, executed rather than linked.
 - Captions are generated locally on your machine. Nothing is uploaded
   anywhere, and no analytics are collected.
+- `SUBSCAST_LIMIT` sets how many entries a menu shows (30 by default);
+  `--limit N` overrides it for one run, and `--limit 0` asks for the whole
+  listing. `subcast --help` lists the rest.
 - Stream URLs are signed and short-lived, and YouTube's edge answers 403
   on a freshly minted one now and then. A stream mpv cannot load is
   therefore fetched and tried once more (`mpv could not load that stream`)
