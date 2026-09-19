@@ -115,8 +115,12 @@ arrives in seconds, and Whisper otherwise.
 
 With `--subs`, captions are drawn by the tool itself in a fixed block at
 the bottom of the terminal: a dim cyan segment title, then the line that
-has just finished (dimmed, so you never lose the thread mid-sentence), and
-under it up to two lines of bright dialogue. The block spans the window — resize or
+has just finished (dimmed, so you never lose the thread mid-sentence),
+under it up to two lines of bright dialogue, and — on the bottom row — the
+playback clock: how far in, how long in total, and a bar between the two
+(narrow windows get the two times alone, and a stream of unknown length
+just the position). mpv's own terminal status line is switched off there,
+so this is the progress display. The block spans the window — resize or
 maximise the terminal and the captions re-wrap to the new width, moving
 with the bottom edge — and it only repaints when the text actually changes,
 so nothing flickers or jumps. The block is cleared again on exit

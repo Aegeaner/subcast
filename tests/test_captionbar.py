@@ -289,3 +289,69 @@ def test_history_is_drawn_dimmer_than_what_is_being_said():
     assert (
         f"{captionbar.CAPTION_COLOUR}the current line"
     ) in screen
+
+
+def test_the_clock_reads_as_minutes_and_seconds():
+    assert captionbar.clock(0) == "0:00"
+    assert captionbar.clock(75.4) == "1:15"
+    assert captionbar.clock(3725) == "1:02:05"
+    # a stream that reports a position before the start must not read as
+    # a negative one
+    assert captionbar.clock(-3) == "0:00"
+
+
+def test_progress_shows_how_far_in_and_how_long():
+    row = captionbar.progress_line(754.0, 3725.0, width=60)
+
+    # 12:34 through a 1:02:05 episode
+    assert row.startswith("12:34 / 1:02:05")
+    assert row.endswith("20%")
+
+    # the bar takes the space the two times leave, and nothing more
+    assert len(row) == 60
+
+
+def test_the_bar_fills_as_the_playback_advances():
+    start = captionbar.progress_line(0.0, 600.0, width=60)
+    end = captionbar.progress_line(600.0, 600.0, width=60)
+
+    assert "█" not in start
+    assert "░" in start
+
+    assert "░" not in end
+    assert "█" in end
+
+
+def test_a_length_mpv_does_not_know_shows_the_position_alone():
+    # a live stream: mpv reports no duration at all
+    assert captionbar.progress_line(95.0, None, width=60) == "1:35"
+    assert captionbar.progress_line(95.0, 0.0, width=60) == "1:35"
+
+
+def test_a_narrow_window_gets_the_times_without_a_bar():
+    row = captionbar.progress_line(
+        30.0,
+        60.0,
+        width=captionbar.MIN_COLUMNS,
+    )
+
+    assert "█" not in row
+    assert row == "0:30 / 1:00  50%"
+
+
+def test_the_clock_is_drawn_on_the_bottom_row_of_the_block():
+    screen = captionbar.draw(
+        "8am News Bulletin",
+        ["the previous line"],
+        ["the current line"],
+        rows=30,
+        columns=100,
+        progress="12:34 / 1:02:05",
+    )
+
+    bottom_row = 30 - captionbar.PROGRESS_ROWS + 1
+
+    assert (
+        f"\x1b[{bottom_row};1H"
+        f"{captionbar.PROGRESS_COLOUR}12:34 / 1:02:05"
+    ) in screen

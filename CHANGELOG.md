@@ -23,6 +23,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   everything downstream.
 - `--save` downloads into `~/Videos/<source>/`; `--quality` caps the video
   height; `--audio-only` plays a video's audio with captions in the terminal.
+- **Playback progress**: the caption block's bottom row is now a clock — how
+  far in and how long in total, with a bar that fills as the episode plays.
+  mpv's own terminal status line stays off in the bar, so this is the
+  progress display there.
 - A caption line now lingers, dimmed, until the next one replaces it.
 - `subcast[youtube]` installs the `yt-dlp` binary for convenience.
 

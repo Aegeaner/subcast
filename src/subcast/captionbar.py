@@ -1,9 +1,10 @@
 """Captions drawn by us at the bottom of the terminal.
 
 mpv's terminal OSD cannot be styled and reprints its whole block on every
-redraw. This draws a fixed block instead - a dim segment title with up to
-two lines of dialogue under it - and rewrites it only when the text
-changes, so the captions sit still and can carry colour.
+redraw. This draws a fixed block instead - a dim segment title, up to two
+lines of dialogue under it, and the playback clock at the bottom - and
+rewrites it only when the text changes, so the captions sit still and can
+carry colour.
 """
 
 from __future__ import annotations
@@ -26,11 +27,18 @@ from pathlib import Path
 from .player import mpv_path
 
 # Rows the block occupies: one title line, the previous line of dialogue,
-# and up to two lines of what is being said now. Kept constant so the
-# terminal does not reflow as captions come and go.
-BLOCK_ROWS = 4
+# up to two lines of what is being said now, and the playback clock. Kept
+# constant so the terminal does not reflow as captions come and go.
+BLOCK_ROWS = 5
 
-CAPTION_LINES = BLOCK_ROWS - 1
+# The clock sits on the bottom row of the block.
+PROGRESS_ROWS = 1
+
+CAPTION_LINES = BLOCK_ROWS - 1 - PROGRESS_ROWS
+
+# A bar narrower than this says nothing the clock either side of it has
+# not already said, so a narrow window gets the two times alone.
+MIN_BAR_CELLS = 12
 
 # How many lines the current cue may occupy before it pushes the previous
 # one off the block.
@@ -57,6 +65,7 @@ SIZING_QUERY = "\x1b[6n"
 TITLE_COLOUR = "\x1b[2;36m"  # faint cyan: readable, not competing
 HISTORY_COLOUR = "\x1b[2;37m"  # the line that just finished
 CAPTION_COLOUR = "\x1b[97m"  # bright white
+PROGRESS_COLOUR = "\x1b[2;37m"  # faint: reference, not reading matter
 MUTED_MARK = " [muted]"
 
 CLEAR_LINE = "\x1b[2K"
@@ -343,6 +352,71 @@ def _read_positions(
     return columns
 
 
+def clock(
+    seconds: float,
+) -> str:
+    """
+    A playback position the way a listener reads it: 0:05, 4:07, 2:00:35.
+    """
+
+    total = max(
+        int(seconds),
+        0,
+    )
+
+    minutes, secs = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+
+    return f"{minutes}:{secs:02d}"
+
+
+def progress_line(
+    position: float,
+    duration: float | None,
+    width: int,
+) -> str:
+    """
+    The bottom row of the block: how far in, how long, and a bar between
+    the two.
+
+    mpv's own progress display goes quiet when it is asked to stay out of
+    the terminal, so the clock is ours. A stream whose length is not known
+    (a live feed) shows the position alone.
+    """
+
+    elapsed = clock(position)
+
+    if not duration or duration <= 0:
+        return elapsed
+
+    fraction = min(
+        max(position / duration, 0.0),
+        1.0,
+    )
+
+    label = f"{elapsed} / {clock(duration)}"
+    percent = f"  {round(fraction * 100)}%"
+
+    # Two spaces either side of the bar, and one cell of margin.
+    cells = width - len(label) - len(percent) - 2
+
+    if cells < MIN_BAR_CELLS:
+        return label + percent
+
+    filled = round(fraction * cells)
+
+    bar = (
+        "  "
+        + "█" * filled
+        + "░" * (cells - filled)
+    )
+
+    return label + bar + percent
+
+
 def frame(
     cues: list[tuple[float, float, str]],
     segments: list[tuple[float, float, str]],
@@ -440,6 +514,7 @@ def draw(
     columns: int,
     muted: bool = False,
     scale: int = 1,
+    progress: str = "",
 ) -> str:
     """
     Escape sequence that paints the block on the last rows of the
@@ -448,6 +523,9 @@ def draw(
     Each line takes `scale` rows: at scale 2 a character is drawn as a
     2x2 block of cells by the terminal, which is how the captions get
     bigger without touching the terminal's font settings.
+
+    `progress` is the playback clock, drawn on the bottom row of the
+    block whatever else is showing.
 
     Deliberately contains no newline: a newline at the bottom row would
     scroll the screen out from under the playback.
@@ -460,10 +538,12 @@ def draw(
     lines.extend(history)
     lines.extend(current)
 
-    while len(lines) < BLOCK_ROWS:
+    while len(lines) < BLOCK_ROWS - PROGRESS_ROWS:
         lines.append("")
 
-    lines = lines[:BLOCK_ROWS]
+    lines = lines[:BLOCK_ROWS - PROGRESS_ROWS]
+
+    lines.append(progress)
 
     # One cell of margin, so a line never wraps into the next row.
     width = max(
@@ -480,13 +560,15 @@ def draw(
 
     colours = [TITLE_COLOUR]
 
-    for index in range(1, BLOCK_ROWS):
+    for index in range(1, BLOCK_ROWS - PROGRESS_ROWS):
 
         colours.append(
             HISTORY_COLOUR
             if index <= len(history)
             else CAPTION_COLOUR
         )
+
+    colours.append(PROGRESS_COLOUR)
 
     for index, (line, colour) in enumerate(
         zip(
@@ -542,11 +624,18 @@ class _Ipc:
             "request_id": self.request_id,
         }
 
-        self.socket.sendall(
-            (
-                json.dumps(request) + "\n"
-            ).encode()
-        )
+        try:
+            self.socket.sendall(
+                (
+                    json.dumps(request) + "\n"
+                ).encode()
+            )
+
+        except OSError:
+            # mpv is on its way out. The question has no answer worth
+            # having, and failing here would only turn quitting into an
+            # error message.
+            return None
 
         while True:
 
@@ -571,7 +660,11 @@ class _Ipc:
 
         while b"\n" not in self.buffer:
 
-            chunk = self.socket.recv(4096)
+            try:
+                chunk = self.socket.recv(4096)
+
+            except OSError:
+                return None
 
             if not chunk:
                 return None
@@ -754,6 +847,10 @@ def _follow(
                 "time-pos"
             )
 
+            duration = client.get(
+                "duration"
+            )
+
             muted = bool(
                 client.get("mute")
             )
@@ -773,14 +870,18 @@ def _follow(
                 columns,
             )
 
+            width = caption_width(
+                columns,
+                board_scale,
+            )
+
+            seconds = float(position)
+
             title, history, current = frame(
                 cues,
                 segments,
-                float(position),
-                width=caption_width(
-                    columns,
-                    board_scale,
-                ),
+                seconds,
+                width=width,
             )
 
             screen = draw(
@@ -791,6 +892,11 @@ def _follow(
                 columns=columns,
                 muted=muted,
                 scale=board_scale,
+                progress=progress_line(
+                    seconds,
+                    duration,
+                    width,
+                ),
             )
 
             if geometry != (lines, columns, board_scale):

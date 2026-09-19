@@ -184,8 +184,9 @@ def parse_args() -> argparse.Namespace:
         default="auto",
         help=(
             "How --subs shows captions. 'bar' draws a coloured block "
-            "at the bottom of the terminal (segment title, then up to "
-            "two lines of dialogue); 'osd' lets mpv print plain "
+            "at the bottom of the terminal (segment title, up to two "
+            "lines of dialogue, and the playback clock with elapsed "
+            "and total time); 'osd' lets mpv print plain "
             "captions; 'auto' uses the bar when stdout is a terminal "
             "(default: auto)."
         ),
@@ -236,20 +237,17 @@ def format_duration(
 ) -> str:
     """
     A duration the way a listener reads it: 0:19, 4:07, 2:00:35.
+
+    Same clock the caption block shows during playback, so a duration
+    and a position always read alike; nothing to show means nothing.
     """
 
     if not seconds:
         return ""
 
-    total = int(seconds)
-
-    hours, rest = divmod(total, 3600)
-    minutes, secs = divmod(rest, 60)
-
-    if hours:
-        return f"{hours}:{minutes:02d}:{secs:02d}"
-
-    return f"{minutes}:{secs:02d}"
+    return captionbar.clock(
+        seconds
+    )
 
 
 def show_listing(
