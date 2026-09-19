@@ -19,10 +19,18 @@ more than URL handlers bolted onto the side: the differences between them are
 confined to that record, and adding one does not touch the segments, artifacts
 or player.
 
-Two hooks are found on the source object itself, through
-`getattr(source, "caption_file", None)` and `getattr(source, "video_id", None)`;
-a module-level function of the same name is invisible to the pipeline. The other
-seam is `Media.stream`, which says who resolves the stream URL.
+A YouTube channel and an RTÉ programme are both listing URLs, and neither is
+special: pointing subcast at either plays the newest item, lists the rest and
+can be saved as a feed. What a programme knows about itself is read from its
+own page - its name, and when it airs - rather than from a constant about one
+programme, which is why the same code covers a show that has been on air for
+decades and one that started last week.
+
+Three hooks are found on the source object itself, through
+`getattr(source, "caption_file", None)`, `getattr(source, "video_id", None)`
+and `getattr(source, "listing_title", None)`; a module-level function of the
+same name is invisible to the pipeline. The other seam is `Media.stream`,
+which says who resolves the stream URL.
 
 ## Who resolves the stream
 
@@ -33,7 +41,12 @@ The two sources differ in one way that everything else follows from:
   the cache holds the URLs a resolve found, they are handed over instead, with
   mpv's own extraction turned off.
 - **RTÉ** is not. Its stream URL only comes out of a resolve, so that one is
-  found before anything starts.
+  found before anything starts. It also does not serve the same audio twice:
+  ads are stitched in per request, so fetching the stream again for playback
+  gets different audio from the file that was transcribed. A captioned episode
+  is therefore played from that file - the only audio its captions can be in
+  pace with, and the same length the segments are placed against - while a run
+  with nothing to caption streams.
 
 That is why `subcast --subs` on an RTÉ episode prepares first and plays second,
 while a YouTube video starts as soon as the listing says what to play: the
@@ -50,10 +63,11 @@ without them.
 The segment titles in the terminal block come from subcast itself, so they
 appear with the captions.
 
-A first play spends its time on the listing call and on mpv's own stream
-extraction, which cannot be moved. A replay spends it on mpv alone, because the
-metadata and the stream URLs a resolve learned are cached. Lowering `--quality`
-helps here: a smaller stream has less to buffer before the first frame.
+A first play spends its time on the listing call, on the resolve and on the
+transcript; a replay spends it on the resolve again - a stream URL is found, not
+kept - and on mpv's own stream extraction, which cannot be moved. Lowering
+`--quality` helps a video here: a smaller stream has less to buffer before the
+first frame.
 
 ## Streams and formats
 
@@ -104,15 +118,35 @@ It also stays idle when a source publishes captions.
 ## Segments
 
 Segments come from the source. YouTube chapters carry exact start times. RTÉ
-publishes only titles and durations, with no offsets, so those are derived: a
-clock-titled segment is pinned to its slot, the rest are packed in published
-order, and each title is snapped onto the nearest transcript cue that mentions
-it, within 180 seconds.
+publishes titles and durations only, with no offsets, so a segment's place is
+derived from the clip list and then found in the transcript - in one of two
+ways, depending on what its title says.
 
-The clip list is the planned running order, which is why a title can appear up
-to a couple of minutes early: a bulletin scheduled for 8.35 can go out at 8.37,
-and an interview whose title words are never spoken keeps its derived slot.
-Interview segments are usually exact.
+A slot is only a slot in a programme that publishes a schedule, which is why
+the hour comes off the programme's own page (`Media.clock_start`) instead of
+out of the code. Morning Ireland's clip titles name clock times ("8am News
+Bulletin"), and its page says it airs `Mon - Fri • 07:00 - 09:00`; a programme
+whose clips name no clock time, or whose page states no schedule, has its
+clips packed across the episode instead - never pinned to another programme's
+hour.
+
+The clock times also say which kind of clip list this is. Titles that carry
+them are the running order of a programme aired to a schedule, so a segment is
+only refined onto the mention of its title - it cannot have happened somewhere
+else than its slot - and it keeps its place in the list. Titles that carry none
+are a menu of highlights published after the broadcast, in whichever order the
+site listed them, so each segment is placed at the mention of its own title,
+wherever in the episode that is, and the list follows the transcript: RTÉ's
+clips for one programme were published in an order the broadcast did not use,
+and by proportion they were minutes away from where their words are said, the
+error growing with each clip. A title whose words are never spoken keeps its
+derived position and its place, which is the honest answer for it - nothing in
+the episode says where it belongs.
+
+In a running order the clip list is the plan rather than the record, which is
+why a title can appear up to a couple of minutes early: a bulletin scheduled for
+8.35 can go out at 8.37. An interview whose title words are never spoken keeps
+its derived slot either way. Interview segments are usually exact.
 
 ## How captions are shaped and drawn
 

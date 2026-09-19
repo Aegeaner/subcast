@@ -12,9 +12,8 @@ import requests
 from . import config
 from .background import Background
 from .chapters import write_chapters_file
-from .media import media_duration
+from .media import find_cached_audio, media_duration
 from .segments import (
-    load_segments,
     place,
     save_segments,
     snap_segments,
@@ -343,19 +342,18 @@ def has_transcript(
     media,
 ) -> bool:
     """
-    Whether the transcript and the placed segments are already cached.
+    Whether the transcript is already cached.
+
+    The transcript alone: the segments, the subtitles and the chapters are
+    rendered from it on every run, so their files say nothing about
+    whether the expensive part has been done.
     """
 
     stem = cache_stem(media)
 
     return stem.with_suffix(
         ".cues.json"
-    ).is_file() and (
-        not media.segments
-        or stem.with_suffix(
-            ".segments.json"
-        ).is_file()
-    )
+    ).is_file()
 
 
 def fetch_captions(
@@ -501,8 +499,10 @@ def prepare(
 
     Published captions win when the source has them - they are already
     timed, and cost nothing but a download. Otherwise the audio is
-    transcribed locally. The transcript and the placed segments are what
-    get cached, so re-rendering never costs a transcription.
+    transcribed locally. The transcript is what gets cached: the placed
+    segments, the subtitles and the chapters are rendered from it on every
+    run, so changing how they are worked out costs a re-render rather than
+    a transcription.
     """
 
     stem = cache_stem(media)
@@ -531,10 +531,6 @@ def prepare(
         )
 
         cues = load_cues(cues_path)
-
-        segments = load_segments(
-            segments_path
-        )
 
     else:
 
@@ -571,34 +567,58 @@ def prepare(
             cues_path,
         )
 
+    # Where the segments go is worked out again on every run, from the
+    # transcript: it is where the segment titles come from, the rules for
+    # placing them change with the code, and placing a cached transcript
+    # costs nothing next to the transcription that reuse saves.
+    #
+    # The length that matters is the length of the audio the transcript
+    # came from. RTÉ states the length of the episode its page was loaded
+    # for, and the audio it stitches is not always that: one URL answered
+    # with 57,154,080 bytes and 56,829,745 bytes a second later.
+    heard = audio_path
+
+    if heard is None:
+
+        heard = find_cached_audio(
+            config.cache_dir(media.source),
+            media.key,
+        )
+
+    duration = 0.0
+
+    if heard is not None:
+        duration = media_duration(heard)
+
+    if not duration:
+
         duration = media.duration or 0.0
 
-        if not duration and audio_path is not None:
-            duration = media_duration(audio_path)
+    if not duration:
 
-        if not duration:
-
-            duration = sum(
-                segment.duration or 0.0
-                for segment in media.segments
-            )
-
-        segments, exact = place(
-            list(media.segments),
-            duration,
+        duration = sum(
+            segment.duration or 0.0
+            for segment in media.segments
         )
 
-        if not exact:
+    segments, exact, running_order = place(
+        list(media.segments),
+        duration,
+        media.clock_start,
+    )
 
-            segments = snap_segments(
-                segments,
-                cues,
-            )
+    if not exact:
 
-        save_segments(
+        segments = snap_segments(
             segments,
-            segments_path,
+            cues,
+            running_order=running_order,
         )
+
+    save_segments(
+        segments,
+        segments_path,
+    )
 
     # Segment titles ride along as cues spanning their own segment, so
     # the terminal shows the title above the dialogue; the speech is

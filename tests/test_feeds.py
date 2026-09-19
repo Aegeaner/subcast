@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from subcast import config, feeds
-from subcast.sources import youtube
+from subcast import config, feeds, sources
+from subcast.sources.rte import Rte
+from subcast.sources.youtube import Youtube
 
 SKY = "https://www.youtube.com/@SkyNews"
 BBC = "https://www.youtube.com/@BBCNews"
@@ -107,19 +108,42 @@ def test_a_feed_can_be_forgotten(
 def test_a_feed_without_a_name_is_named_after_the_listing(
     monkeypatch,
 ):
-    monkeypatch.setattr(
-        youtube,
-        "listing_title",
-        lambda url: "Sky News",
-    )
+    def named(self, url):
+        return "Sky News"
+
+    monkeypatch.setattr(Youtube, "listing_title", named)
 
     assert feeds.title_for(SKY) == "Sky News"
 
 
-def test_a_source_that_is_not_a_listing_needs_a_name():
+def test_a_programme_names_a_feed_after_itself(
+    monkeypatch,
+):
+    def named(self, url):
+        return "Example Show"
+
+    monkeypatch.setattr(Rte, "listing_title", named)
+
+    assert feeds.title_for(
+        "https://www.rte.ie/radio/radio1/example-show/"
+    ) == "Example Show"
+
+
+def test_a_source_that_cannot_name_a_listing_needs_a_name(
+    monkeypatch,
+):
+    class Source:
+        """A source that knows no name for what it lists."""
+
+        name = "files"
+
+    monkeypatch.setattr(
+        sources,
+        "detect",
+        lambda url: Source(),
+    )
+
     with pytest.raises(RuntimeError) as error:
-        feeds.title_for(
-            "https://www.rte.ie/radio/radio1/morning-ireland/"
-        )
+        feeds.title_for(SKY)
 
     assert "--name" in str(error.value)

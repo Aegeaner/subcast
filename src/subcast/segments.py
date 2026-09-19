@@ -6,21 +6,16 @@ import json
 import re
 from pathlib import Path
 
-# Morning Ireland airs 07:00-09:00 and the podcast audio starts with the
-# 7am bulletin, so a published clock time ("8am News Bulletin") maps onto
-# an audio offset by subtracting this hour.
-SHOW_START_HOUR = 7
+# A published clock time ("8am News Bulletin") is a slot in the
+# programme's own schedule, which the source reads off the programme's
+# page and hands over as `Media.clock_start`: a clip is placed at the time
+# it names, less the time its programme went on air.
 
-def clip_start_from_title(
+def clip_clock_seconds(
     title: str,
 ) -> float | None:
     """
-    Scheduled slot of a segment whose title carries a clock time.
-
-    "7.35am Sports News" -> 35 * 60. The clip list is the planned
-    running order, so these are slot times: the bulletins do go out
-    close to the clock, but an overrunning interview pushes them a
-    minute or two late.
+    The time of day a segment title names, in seconds since midnight.
     """
 
     match = re.match(
@@ -46,19 +41,53 @@ def clip_start_from_title(
     ):
         hour += 12
 
-    seconds = (
-        (hour - SHOW_START_HOUR) * 3600
+    if hour > 23 or minute > 59:
+        return None
+
+    return float(
+        hour * 3600
         + minute * 60
     )
+
+def clip_start_from_title(
+    title: str,
+    clock_start: float | None,
+) -> float | None:
+    """
+    Scheduled slot of a segment whose title carries a clock time, as an
+    offset into the episode.
+
+    "7.35am Sports News" is 35 minutes into a programme that goes on air
+    at 7. The clip list is the planned running order, so these are slot
+    times: the bulletins do go out close to the clock, but an overrunning
+    interview pushes them a minute or two late.
+
+    A programme whose schedule is not known gets no slots at all, rather
+    than slots measured against the wrong hour.
+    """
+
+    clock = clip_clock_seconds(title)
+
+    if clock is None or clock_start is None:
+        return None
+
+    seconds = clock - clock_start
 
     if seconds < 0:
         return None
 
-    return float(seconds)
+    return seconds
+
+# How often a word may be said in an episode and still place the segment
+# that names it. A title the whole programme is about ("Trump visit ...",
+# on a broadcast that says "Trump" 81 times) has no such word: every
+# mention of it belongs to some other part of the programme.
+ANCHOR_LIMIT = 12
 
 def build_segments(
     clips: list[tuple[str, float]],
     duration: float,
+    clock_start: float | None = None,
 ) -> list[tuple[float, float, str]]:
     """
     Place the published segments on the episode timeline.
@@ -68,7 +97,8 @@ def build_segments(
     of a window (ad breaks, headlines, music) in front of the next pin.
 
     Without a single pin the whole list is stretched across the episode
-    instead, which is the only thing left to go on.
+    instead, which is the only thing left to go on - and the only thing
+    to go on for a programme whose clips name no clock time.
 
     These are estimates: snap_segments corrects them against the
     transcript. Returns (start, end, title) in seconds.
@@ -78,7 +108,10 @@ def build_segments(
         return []
 
     starts: list[float | None] = [
-        clip_start_from_title(title)
+        clip_start_from_title(
+            title,
+            clock_start,
+        )
         for title, _ in clips
     ]
 
@@ -170,7 +203,8 @@ def build_segments(
 def place(
     segments,
     duration: float,
-) -> tuple[list[tuple[float, float, str]], bool]:
+    clock_start: float | None = None,
+) -> tuple[list[tuple[float, float, str]], bool, bool]:
     """
     Put published segments on the timeline.
 
@@ -178,8 +212,10 @@ def place(
     word and need no aligning; sources that publish only lengths (RTÉ's
     clip list) are packed and later snapped onto the transcript.
 
-    Returns the placed segments as (start, end, title) and whether their
-    starts are exact.
+    Returns the placed segments as (start, end, title), whether their
+    starts are exact, and whether the list is a running order - which it
+    is when its titles carry clock times, since only a programme airing to
+    a schedule publishes those.
     """
 
     if any(segment.start is not None for segment in segments):
@@ -222,7 +258,16 @@ def place(
         for segment in segments
     ]
 
-    return build_segments(clips, duration), False
+    running_order = any(
+        clip_start_from_title(title, clock_start) is not None
+        for title, _ in clips
+    )
+
+    return (
+        build_segments(clips, duration, clock_start),
+        False,
+        running_order,
+    )
 
 
 def segment_keywords(
@@ -231,12 +276,19 @@ def segment_keywords(
     """
     Distinctive words of a segment title, used to find the segment in
     the transcript.
+
+    A quote around a word is the site's, not the speaker's: the title
+    "'Appalling' - Clare protestors say Trump not welcome" has to match
+    "It is appalling", so the apostrophes come off the ends.
     """
 
-    words = re.findall(
-        r"[a-z0-9']+",
-        title.lower(),
-    )
+    words = [
+        word.strip("'")
+        for word in re.findall(
+            r"[a-z0-9']+",
+            title.lower(),
+        )
+    ]
 
     keys = [
         word
@@ -302,48 +354,6 @@ def save_segments(
     return path
 
 
-def load_segments(
-    path: Path,
-) -> list[tuple[float, float, str]]:
-    """
-    Segments cached by save_segments, or an empty list.
-    """
-
-    try:
-        raw = json.loads(
-            path.read_text(
-                encoding="utf-8"
-            )
-        )
-
-    except (OSError, ValueError):
-        return []
-
-    if not isinstance(raw, list):
-        return []
-
-    segments: list[tuple[float, float, str]] = []
-
-    for item in raw:
-
-        if not isinstance(item, dict):
-            return []
-
-        try:
-            segments.append(
-                (
-                    float(item["start"]),
-                    float(item["end"]),
-                    str(item["title"]),
-                )
-            )
-
-        except (KeyError, TypeError, ValueError):
-            return []
-
-    return segments
-
-
 def closest_keyword_cue(
     cues: list[tuple[float, float, str]],
     keywords: list[str],
@@ -390,25 +400,71 @@ def closest_keyword_cue(
 
     return best
 
-def snap_segments(
+def mentioned_at(
+    cues: list[tuple[float, float, str]],
+    keyword: str,
+) -> list[float]:
+    """
+    When a word is said in the episode.
+    """
+
+    return [
+        start
+        for start, _, text in cues
+        if keyword in text.lower()
+    ]
+
+
+def anchor_of(
+    cues: list[tuple[float, float, str]],
+    keywords: list[str],
+    expected: float,
+) -> float | None:
+    """
+    Where a segment starts, from the words its title uses.
+
+    The mention nearest the derived position wins, among the words this
+    episode does not say all the time: a title naming something the whole
+    programme is about ("Trump visit ..." on a broadcast that says
+    "Trump" 81 times) is placed by the word it does not share, and a title
+    with nothing but shared words is not placed at all.
+
+    There is no window. A clip list that names no clock time is a menu of
+    highlights rather than the running order - five clips This Week
+    published after the broadcast, whose order is not the order they aired
+    in - so a mention 300 seconds from the derived position is the answer,
+    not something to be refused.
+    """
+
+    candidates = [
+        (moment, len(times))
+        for keyword in keywords
+        for times in [mentioned_at(cues, keyword)]
+        if times and len(times) <= ANCHOR_LIMIT
+        for moment in times
+    ]
+
+    if not candidates:
+        return None
+
+    return min(
+        candidates,
+        key=lambda candidate: (
+            abs(candidate[0] - expected),
+            candidate[1],
+        ),
+    )[0]
+
+
+def slot_starts(
     segments: list[tuple[float, float, str]],
     cues: list[tuple[float, float, str]],
-    tolerance: float = 180.0,
-) -> list[tuple[float, float, str]]:
+    tolerance: float,
+) -> list[float]:
     """
-    Move each published segment onto the transcript.
-
-    The clip list is the planned running order, so its clock times are
-    slot times rather than start times ("7.50am Business News" can go
-    out at 7.52) and the ads and trails between segments are not
-    published at all. The nearest transcript cue that mentions the
-    segment title is its real start; a segment whose words are never
-    spoken keeps the derived position, so the error stays within
-    tolerance either way.
+    Where each segment starts, in the published order: its slot, refined
+    onto the nearest mention of its title.
     """
-
-    if not segments or not cues:
-        return segments
 
     starts: list[float] = []
     previous = -1.0
@@ -441,23 +497,123 @@ def snap_segments(
 
         previous = starts[-1]
 
-    last_end = segments[-1][1]
+    return starts
 
-    snapped_segments: list[tuple[float, float, str]] = []
 
-    for index, (_, _, title) in enumerate(
-        segments
-    ):
+def transcript_starts(
+    segments: list[tuple[float, float, str]],
+    cues: list[tuple[float, float, str]],
+) -> list[tuple[int, float, tuple[float, float, str]]]:
+    """
+    Each segment with where the transcript says it belongs, in the order
+    the transcript puts them, as (published index, start, segment).
 
-        start = starts[index]
+    A segment the transcript cannot place keeps its derived position, and
+    is ordered by that position among the ones that could be placed.
+    """
+
+    placed: list[tuple[int, float, tuple[float, float, str]]] = []
+
+    for index, segment in enumerate(segments):
+
+        start, _, title = segment
+
+        anchor = anchor_of(
+            cues,
+            segment_keywords(title),
+            start,
+        )
+
+        placed.append(
+            (
+                index,
+                anchor if anchor is not None else start,
+                segment,
+            )
+        )
+
+    placed.sort(
+        key=lambda entry: (entry[1], entry[0])
+    )
+
+    return placed
+
+
+def snap_segments(
+    segments: list[tuple[float, float, str]],
+    cues: list[tuple[float, float, str]],
+    tolerance: float = 180.0,
+    running_order: bool = True,
+) -> list[tuple[float, float, str]]:
+    """
+    Move each published segment onto the transcript.
+
+    A clip list whose titles carry clock times is the running order: those
+    are slot times rather than start times ("7.50am Business News" can go
+    out at 7.52), the ads and trails between segments are not published at
+    all, and each segment is refined onto the nearest mention of its title
+    without leaving its place in the list.
+
+    A clip list whose titles name no clock time is a menu of highlights,
+    and its order is the order RTÉ published them in rather than the order
+    they aired in. Those segments are placed at the mention of their own
+    titles, wherever in the episode that is, and the list follows the
+    transcript. A segment whose words are never spoken keeps its derived
+    position and its place among the others, which is the honest answer
+    for it either way.
+    """
+
+    if not segments or not cues:
+        return segments
+
+    if running_order:
+
+        ordered = [
+            (
+                index,
+                start,
+                segment,
+            )
+            for index, (start, segment) in enumerate(
+                zip(
+                    slot_starts(
+                        segments,
+                        cues,
+                        tolerance,
+                    ),
+                    segments,
+                )
+            )
+        ]
+
+    else:
+
+        ordered = transcript_starts(
+            segments,
+            cues,
+        )
+
+    starts = [
+        start
+        for _, start, _ in ordered
+    ]
+
+    last_end = max(
+        end
+        for _, end, _ in segments
+    )
+
+    laid: list[tuple[float, float, str]] = []
+
+    for index, (_, start, (_, _, title)) in enumerate(ordered):
 
         end = (
             starts[index + 1]
-            if index + 1 < len(segments)
+            if index + 1 < len(starts)
             else max(start + 1.0, last_end)
         )
 
-        snapped_segments.append(
+        laid.append(
             (
                 start,
                 max(end, start + 1.0),
@@ -465,4 +621,4 @@ def snap_segments(
             )
         )
 
-    return snapped_segments
+    return laid

@@ -113,17 +113,20 @@ def test_streams_are_handed_to_mpv_instead_of_a_page():
     ]
 
 
-def test_the_run_says_which_of_the_two_things_mpv_gets(monkeypatch, capsys):
+def test_the_run_says_what_mpv_was_given(monkeypatch, capsys):
     """
-    The page URL is printed either way, so it cannot tell a reader whether
-    mpv was handed the resolved URLs or the page to extract - which is what
-    the waiting time is made of.
+    The URL is printed either way, so it cannot tell a reader whether mpv
+    was handed the resolved URLs, the page to extract, or the stream URL a
+    resolve just found - which is what the waiting time is made of.
     """
 
     monkeypatch.setattr(player, "mpv_path", lambda: "mpv")
     monkeypatch.setattr(player, "run_mpv", lambda *args, **kwargs: 0)
 
-    player.play_window("https://example.test/watch")
+    player.play_window(
+        "https://example.test/watch",
+        stream=True,
+    )
     assert "Streams: mpv extracts them from the page" in capsys.readouterr().out
 
     player.play_window(
@@ -131,6 +134,28 @@ def test_the_run_says_which_of_the_two_things_mpv_gets(monkeypatch, capsys):
         streams=Streams(video="https://example.test/video", audio=None),
     )
     assert "Streams: resolved by subcast" in capsys.readouterr().out
+
+    # a source whose URL is a page mpv cannot play: what it is handed is
+    # the stream URL the resolve found
+    player.play_window(
+        "https://example.test/audio.mp3",
+        stream=False,
+    )
+    assert (
+        "Streams: the stream URL subcast resolved"
+        in capsys.readouterr().out
+    )
+
+    # and a captioned episode plays the audio its captions were timed
+    # against, whatever else the source would stream
+    player.play_window(
+        "/tmp/episode.mp3",
+        stream=False,
+    )
+    assert (
+        "Streams: the audio the captions were timed against"
+        in capsys.readouterr().out
+    )
 
 
 class FakeSocket:

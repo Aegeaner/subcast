@@ -1,4 +1,10 @@
-"""RTÉ Morning Ireland: show and episode lookup, media resolution."""
+"""RTÉ Radio 1: programme and episode lookup, media resolution.
+
+A programme is a listing URL. Its page lists the episodes RTÉ published,
+and an episode page carries the clip list and the player embed; what a
+programme knows about itself - its name, when it airs - is read from its
+own page, so nothing here belongs to one programme.
+"""
 
 from __future__ import annotations
 
@@ -17,10 +23,11 @@ from playwright.sync_api import (
 )
 
 from ..media import sanitize_filename
-from ..segments import clip_start_from_title
+from ..segments import clip_clock_seconds
 from . import Media, Segment
 
-SHOW_URL = (
+# The programme subcast plays when no URL is given.
+DEFAULT_SHOW_URL = (
     "https://www.rte.ie/radio/radio1/morning-ireland/"
 )
 
@@ -35,10 +42,61 @@ HEADERS = {
     "Accept-Language": "en-IE,en;q=0.9",
 }
 
+# Every programme is served by the same pages: /radio/<station>/<show>/
+# lists the episodes RTÉ published, and one episode lives under
+# /episodes/<uuid>. Those pages are what this source handles - nothing
+# else on rte.ie is a programme.
 EPISODE_RE = re.compile(
-    r"/radio/radio1/morning-ireland/episodes/"
-    r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+    r"(?P<show_path>/radio/(?P<station>[a-z0-9-]+)/"
+    r"(?P<show>[a-z0-9-]+))/episodes/"
+    r"(?P<uuid>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
     r"[0-9a-f]{4}-[0-9a-f]{12})/?$",
+    re.IGNORECASE,
+)
+
+SHOW_RE = re.compile(
+    r"/radio/[a-z0-9-]+/[a-z0-9-]+/?$",
+    re.IGNORECASE,
+)
+
+# A programme's own schedule line, in the hero card of its page: "Mon -
+# Fri • 07:00 - 09:00". Only the start of it is wanted - it is what a
+# clock-titled clip ("8am News Bulletin") is measured against.
+SCHEDULE_RE = re.compile(
+    r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*"
+    r"(?:\s*-\s*[A-Z][a-z]{2,8})?"
+    r"\s*•\s*(\d{1,2}):(\d{2})",
+    re.IGNORECASE,
+)
+
+# An episode card leads with the title and then repeats the date and
+# states the length: "Morning Ireland - 18 September 2026 Fri 18 Sep  •
+# 2 Hr 0 Mins • Morning Ireland".
+CARD_DAY_RE = re.compile(
+    r"\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{1,2}\s+"
+    r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$"
+)
+
+CARD_HOURS_RE = re.compile(
+    r"(\d+)\s*Hrs?\b",
+    re.IGNORECASE,
+)
+
+CARD_MINUTES_RE = re.compile(
+    r"(\d+)\s*Mins?\b",
+    re.IGNORECASE,
+)
+
+# The hero card's own words are a call to action rather than a name: the
+# dated card below it is what names the episode.
+CARD_CALL_RE = re.compile(
+    r"^Listen\b",
+    re.IGNORECASE,
+)
+
+# What every page of the site adds to a title it names itself.
+SITE_SUFFIX_RE = re.compile(
+    r"\s*(?:\||-)\s*RTÉ Radio 1\s*$",
     re.IGNORECASE,
 )
 
@@ -63,78 +121,25 @@ def http_get(
 
     return response
 
-def find_latest_episode(
-    show_html: str,
-) -> tuple[str, str]:
-    soup = BeautifulSoup(
-        show_html,
-        "html.parser",
-    )
-
-    for a in soup.find_all(
-        "a",
-        href=True,
-    ):
-        href = a["href"].strip()
-
-        absolute = urljoin(
-            SHOW_URL,
-            href,
-        )
-
-        if EPISODE_RE.search(
-            absolute.rstrip("/")
-        ):
-            title = a.get_text(
-                " ",
-                strip=True,
-            )
-
-            return (
-                absolute.rstrip("/") + "/",
-                title,
-            )
-
-    raise RuntimeError(
-        "Could not find a concrete Morning Ireland episode URL."
-    )
-
 def extract_episode_title(
     episode_html: str,
     fallback: str,
 ) -> str:
     """
-    Get the actual title from the concrete episode page.
+    What a page names itself.
 
-    The show listing may expose only:
-        Morning Ireland
+    A programme page carries only the programme; an episode page carries
+    the programme and the date:
 
-    while the episode page contains:
-        Morning Ireland - 4 September 2026
+        This Week - 13th September 2026
+
+    so the caller passes what it already knows as the fallback.
     """
 
     soup = BeautifulSoup(
         episode_html,
         "html.parser",
     )
-
-    # ------------------------------------------------------------
-    # Prefer H1
-    # ------------------------------------------------------------
-
-    for h1 in soup.find_all("h1"):
-        text = h1.get_text(
-            " ",
-            strip=True,
-        )
-
-        if not text:
-            continue
-
-        # Usually the wanted form is:
-        # Morning Ireland - 4 September 2026
-        if "Morning Ireland" in text:
-            return text
 
     # ------------------------------------------------------------
     # OpenGraph title
@@ -153,10 +158,34 @@ def extract_episode_title(
             content = tag.get("content")
 
             if content:
-                content = content.strip()
+                content = SITE_SUFFIX_RE.sub(
+                    "",
+                    content.strip(),
+                ).strip()
 
                 if content:
                     return content
+
+    # ------------------------------------------------------------
+    # Then a heading
+    # ------------------------------------------------------------
+
+    for h1 in soup.find_all("h1"):
+        text = h1.get_text(
+            " ",
+            strip=True,
+        )
+
+        if not text:
+            continue
+
+        text = SITE_SUFFIX_RE.sub(
+            "",
+            text,
+        ).strip()
+
+        if text:
+            return text
 
     # ------------------------------------------------------------
     # HTML title
@@ -169,25 +198,147 @@ def extract_episode_title(
         )
 
         if text:
-            # Remove common site suffixes.
-            text = re.sub(
-                r"\s*\|\s*Morning Ireland.*$",
+            text = SITE_SUFFIX_RE.sub(
                 "",
                 text,
-                flags=re.IGNORECASE,
-            ).strip()
-
-            text = re.sub(
-                r"\s+-\s+RTÉ Radio 1.*$",
-                "",
-                text,
-                flags=re.IGNORECASE,
             ).strip()
 
             if text:
                 return text
 
     return fallback
+
+def show_url(
+    url: str,
+) -> str:
+    """
+    The programme page an episode belongs to; a programme page itself
+    comes back with its own trailing slash.
+    """
+
+    trimmed = url.rstrip("/")
+
+    match = EPISODE_RE.search(trimmed)
+
+    if match is None:
+        return trimmed + "/"
+
+    return trimmed[: match.end("show_path")] + "/"
+
+def programme_name(
+    url: str,
+) -> str:
+    """
+    What to call a programme before its episode page has been read: its
+    slug, spelled out ("another-show" -> "Another Show"). The resolve
+    replaces it with what the episode calls itself.
+    """
+
+    slug = show_url(url).rstrip("/").rsplit(
+        "/",
+        1,
+    )[-1]
+
+    return slug.replace(
+        "-",
+        " ",
+    ).title()
+
+def scheduled_start(
+    html: str,
+) -> float | None:
+    """
+    The time of day a programme's audio begins, from its own schedule
+    line: what a clock-titled clip is measured against.
+
+    A page that states no schedule leaves the clip times unusable rather
+    than guessed at, which is what every programme but Morning Ireland
+    publishes anyway - their clip titles carry no clock time.
+    """
+
+    match = SCHEDULE_RE.search(html)
+
+    if match is None:
+        return None
+
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+
+    if hour > 23 or minute > 59:
+        return None
+
+    return float(
+        hour * 3600
+        + minute * 60
+    )
+
+def card_title(
+    text: str,
+) -> str:
+    """
+    The title an episode card leads with: everything before the date it
+    repeats and the length it states. The hero card's call to action is
+    no title at all.
+    """
+
+    head = text.split(
+        "•"
+    )[0].strip()
+
+    if CARD_CALL_RE.match(head):
+        return ""
+
+    return CARD_DAY_RE.sub(
+        "",
+        head,
+    ).strip()
+
+def card_duration(
+    text: str,
+) -> float | None:
+    """
+    The length an episode card states: "1 Hr 5 Mins", "59 Mins".
+    """
+
+    hours = CARD_HOURS_RE.search(text)
+    minutes = CARD_MINUTES_RE.search(text)
+
+    if hours is None and minutes is None:
+        return None
+
+    total = 0
+
+    if hours is not None:
+        total += int(hours.group(1)) * 3600
+
+    if minutes is not None:
+        total += int(minutes.group(1)) * 60
+
+    return float(total)
+
+def fetched_title(
+    session: requests.Session,
+    episode_url: str,
+    referer: str,
+) -> str:
+    """
+    What an episode calls itself, for a hero card that names nothing.
+
+    One extra request, and only where the programme's page does not give
+    the newest episode a dated card of its own, so a menu's first line
+    reads like every other line of it.
+    """
+
+    page = http_get(
+        session,
+        episode_url,
+        referer=referer,
+    )
+
+    return extract_episode_title(
+        page.text,
+        programme_name(episode_url),
+    )
 
 def find_episode_clips(
     episode_html: str,
@@ -272,7 +423,7 @@ def find_episode_clips(
     # RTÉ publishes some clip lists newest-first; the clock times in the
     # titles tell which way round this one is.
     clock_times = [
-        clip_start_from_title(title)
+        clip_clock_seconds(title)
         for title, _ in clips
     ]
 
@@ -946,7 +1097,7 @@ def episode_key(
     )
 
     if match:
-        key = match.group(1).lower()
+        key = match.group("uuid").lower()
 
     else:
         key = sanitize_filename(
@@ -958,10 +1109,18 @@ def episode_key(
 
 def find_episodes(
     show_html: str,
+    base_url: str,
     limit: int | None = None,
-) -> list[tuple[str, str]]:
+) -> list[tuple[str, str, float | None]]:
     """
-    Episode URLs on a show page, newest first, as (url, listing title).
+    The episodes a programme page links, newest first, as (URL, title,
+    duration).
+
+    The newest episode is linked from its hero card - which says no more
+    than "Listen LATEST episode" - and again from the dated list under it,
+    so entries are keyed by episode id and the one that names the episode
+    best is kept. A hero with no dated card of its own comes back
+    untitled, which is what the caller reads the episode page for.
     """
 
     soup = BeautifulSoup(
@@ -969,41 +1128,53 @@ def find_episodes(
         "html.parser",
     )
 
-    episodes: list[tuple[str, str]] = []
-    seen: set[str] = set()
+    episodes: dict[str, tuple[str, str, float | None]] = {}
 
     for anchor in soup.find_all(
         "a",
         href=True,
     ):
 
-        absolute = urljoin(
-            SHOW_URL,
-            anchor["href"].strip(),
-        ).rstrip("/")
-
-        if absolute in seen:
-            continue
-
-        if not EPISODE_RE.search(absolute):
-            continue
-
-        seen.add(absolute)
-
-        episodes.append(
-            (
-                absolute + "/",
-                anchor.get_text(
-                    " ",
-                    strip=True,
-                ),
-            )
+        absolute = (
+            urljoin(
+                base_url,
+                anchor["href"].strip(),
+            ).rstrip("/")
+            + "/"
         )
 
-        if limit and len(episodes) >= limit:
-            break
+        match = EPISODE_RE.search(
+            absolute.rstrip("/")
+        )
 
-    return episodes
+        if match is None:
+            continue
+
+        text = anchor.get_text(
+            " ",
+            strip=True,
+        )
+
+        title = card_title(text)
+
+        key = match.group("uuid").lower()
+
+        known = episodes.get(key)
+
+        if known is not None and len(known[1]) >= len(title):
+            continue
+
+        episodes[key] = (
+            absolute,
+            title,
+            card_duration(text),
+        )
+
+    listed = list(
+        episodes.values()
+    )
+
+    return listed[:limit] if limit else listed
 
 
 def episode_duration(
@@ -1026,11 +1197,14 @@ def episode_duration(
 
 class Rte:
     """
-    RTÉ Radio 1's Morning Ireland.
+    RTÉ Radio 1.
 
+    Any programme page is a listing, and an episode URL is one item.
     Listing is one request; resolving an episode means reading its page
     and then driving the RTÉ player in a headless browser to find the
-    audio the player itself would stream.
+    audio the player itself would stream - which is why an item of this
+    source is never streamed from its page URL (`Media.stream` is False
+    here and in `resolve`), the way a YouTube page can be.
     """
 
     name = "rte"
@@ -1040,9 +1214,17 @@ class Rte:
         url: str,
     ) -> bool:
 
-        host = urlsplit(url).netloc.lower()
+        parts = urlsplit(url)
 
-        return host == "rte.ie" or host.endswith(".rte.ie")
+        host = parts.netloc.lower()
+
+        if not (host == "rte.ie" or host.endswith(".rte.ie")):
+            return False
+
+        return (
+            EPISODE_RE.search(parts.path.rstrip("/")) is not None
+            or SHOW_RE.search(parts.path) is not None
+        )
 
     def episodes(
         self,
@@ -1050,7 +1232,7 @@ class Rte:
         limit: int | None = None,
     ) -> list[Media]:
 
-        target = url or SHOW_URL
+        target = url or DEFAULT_SHOW_URL
 
         if EPISODE_RE.search(target.rstrip("/")):
 
@@ -1058,9 +1240,10 @@ class Rte:
                 Media(
                     source=self.name,
                     key=episode_key(target, ""),
-                    title="Morning Ireland",
+                    title=programme_name(target),
                     url=target,
                     kind="audio",
+                    stream=False,
                 )
             ]
 
@@ -1071,19 +1254,57 @@ class Rte:
             target,
         )
 
-        return [
-            Media(
-                source=self.name,
-                key=episode_key(episode_url, listing_title),
-                title=listing_title or "Morning Ireland",
-                url=episode_url,
-                kind="audio",
+        clock_start = scheduled_start(
+            listing.text
+        )
+
+        items: list[Media] = []
+
+        for episode_url, title, duration in find_episodes(
+            listing.text,
+            target,
+            limit,
+        ):
+
+            items.append(
+                Media(
+                    source=self.name,
+                    key=episode_key(episode_url, title),
+                    title=(
+                        title
+                        or fetched_title(
+                            session,
+                            episode_url,
+                            target,
+                        )
+                    ),
+                    url=episode_url,
+                    kind="audio",
+                    duration=duration,
+                    stream=False,
+                    clock_start=clock_start,
+                )
             )
-            for episode_url, listing_title in find_episodes(
-                listing.text,
-                limit,
-            )
-        ]
+
+        return items
+
+    def listing_title(
+        self,
+        url: str,
+    ) -> str:
+        """
+        What a programme calls itself, for a feed saved under its name.
+        """
+
+        page = http_get(
+            requests.Session(),
+            show_url(url),
+        )
+
+        return extract_episode_title(
+            page.text,
+            programme_name(url),
+        )
 
     def resolve(
         self,
@@ -1092,16 +1313,39 @@ class Rte:
 
         session = requests.Session()
 
+        show = show_url(media.url)
+
         episode = http_get(
             session,
             media.url,
-            referer=SHOW_URL,
+            referer=show,
         )
 
         title = extract_episode_title(
             episode.text,
-            media.title,
+            media.title or programme_name(media.url),
         )
+
+        clips = find_episode_clips(
+            episode.text
+        )
+
+        # Only a clip list with clock times in it needs the programme's
+        # schedule, and only when the listing this item came from did not
+        # already read it off the programme's page.
+        clock_start = media.clock_start
+
+        if clock_start is None and any(
+            clip_clock_seconds(clip_title) is not None
+            for clip_title, _ in clips
+        ):
+
+            clock_start = scheduled_start(
+                http_get(
+                    session,
+                    show,
+                ).text
+            )
 
         iframe_url = find_dustin_iframe(
             episode.text,

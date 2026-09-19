@@ -8,10 +8,10 @@ Whisper when there are none. A segment title tops the caption block, and you can
 skip between segments while you watch.
 
 Subcast works with **YouTube** (videos, playlists, channels and live
-broadcasts, using YouTube's own captions and chapters) and **RTÉ Morning
-Ireland** (audio, with segment titles from RTÉ's clip list). A broadcast has no
-finished audio and nothing to caption it with, so `--subs` transcribes it as it
-plays: the captions follow the picture by a few seconds.
+broadcasts, using YouTube's own captions and chapters) and **RTÉ Radio 1**
+(any programme's page, with segment titles from RTÉ's clip list). A broadcast
+has no finished audio and nothing to caption it with, so `--subs` transcribes
+it as it plays: the captions follow the picture by a few seconds.
 
 This page installs subcast and plays something with it. Everything else lives
 in the documentation:
@@ -101,6 +101,16 @@ and Sarah McInerney. We're here with you until nine...
 
 The first run downloads a Whisper model (about 480 MB) and takes minutes to
 transcribe a two-hour episode. Later runs reuse the transcript.
+
+Another RTÉ Radio 1 programme works the same way: its page is a listing URL,
+like a channel is.
+
+```
+subcast https://www.rte.ie/radio/radio1/this-week/
+```
+
+That plays the newest episode of it; `--pick` chooses from the episodes its
+page lists, and `--add-feed` keeps the programme under its own name.
 
 **3. Pick from a channel.** A channel or playlist holds more than one item, so
 ask for the list and choose:

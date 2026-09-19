@@ -217,6 +217,43 @@ class Youtube:
 
         return None
 
+    def listing_title(
+        self,
+        url: str,
+    ) -> str:
+        """
+        What a listing calls itself: the playlist or channel name.
+
+        A channel listing says what it lists ("BBC News - Videos"), which
+        is noise in a feed's name, so that tail comes off.
+        """
+
+        payload = yt_dlp_json(
+            flatten_url(url),
+            limit=1,
+            flat=True,
+        )
+
+        title = payload.get("title")
+
+        if not isinstance(title, str) or not title.strip():
+
+            raise RuntimeError(
+                f"{url} does not name a playlist or channel"
+            )
+
+        named = title.strip()
+
+        for tail in LISTING_TAILS:
+
+            suffix = f" - {tail.title()}"
+
+            if named.lower().endswith(suffix.lower()):
+
+                return named[: -len(suffix)].strip() or named
+
+        return named
+
 
 SOURCE = Youtube()
 
@@ -233,43 +270,6 @@ def search_url(
         count=max(count, 1),
         query=query,
     )
-
-
-def listing_title(
-    url: str,
-) -> str:
-    """
-    What a listing calls itself: the playlist or channel name.
-
-    A channel listing says what it lists ("BBC News - Videos"), which is
-    noise in a feed's name, so that tail comes off.
-    """
-
-    payload = yt_dlp_json(
-        flatten_url(url),
-        limit=1,
-        flat=True,
-    )
-
-    title = payload.get("title")
-
-    if not isinstance(title, str) or not title.strip():
-
-        raise RuntimeError(
-            f"{url} does not name a playlist or channel"
-        )
-
-    named = title.strip()
-
-    for tail in LISTING_TAILS:
-
-        suffix = f" - {tail.title()}"
-
-        if named.lower().endswith(suffix.lower()):
-
-            return named[: -len(suffix)].strip() or named
-
-    return named
 
 
 def yt_dlp_available() -> bool:

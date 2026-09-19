@@ -13,7 +13,7 @@ from . import captionbar, config, feeds, listing, meta, picker
 from .background import Background
 from .config import DEFAULT_WHISPER_MODEL, cache_dir, save_dir
 from .live import Capture, LiveCaptions
-from .media import acquire, download_audio, sanitize_filename
+from .media import acquire, download_audio, find_cached_audio, sanitize_filename
 from .player import Positions, play_window, play_with_mpv
 from .sources import Media, Source, default, detect
 from .subtitles import (
@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
             "Play or save an episode with subtitles: generated locally "
             "when the source publishes none, and shown as they play. "
             "Give it a URL (YouTube video, playlist or channel, or an "
-            "RTÉ Morning Ireland episode or show page) or nothing at all "
+            "RTÉ Radio 1 programme or episode page) or nothing at all "
             "for the latest Morning Ireland."
         )
     )
@@ -72,7 +72,7 @@ def parse_args() -> argparse.Namespace:
         default="",
         help=(
             "YouTube video, playlist or channel URL, or an RTÉ "
-            "Morning Ireland show or episode URL. Omit for the latest "
+            "Radio 1 programme or episode URL. Omit for the latest "
             "Morning Ireland."
         ),
     )
@@ -1081,6 +1081,43 @@ def chapters_for(
     return path if path.is_file() else None
 
 
+def playback_url(
+    media: Media,
+    subtitles: PendingSubtitles | None,
+) -> str:
+    """
+    What to play: the audio the subtitles were timed against when there is
+    one, the stream URL otherwise.
+
+    RTÉ stitches ads into an episode per request, measured: the same URL
+    answered with two different files a second apart, 57,154,080 bytes and
+    56,829,745, with different audio at the start. So the file that was
+    transcribed and the file mpv would stream are not the same audio, and
+    captions timed against one cannot be in pace with the other. The file
+    a run already downloaded is the one the cues belong to, so that is what
+    plays.
+
+    Nothing else changes: a run that is not captioned downloads nothing and
+    streams (`subtitles` is None), and a source whose URL is a page is
+    mpv's to resolve either way.
+    """
+
+    if subtitles is None or media.stream:
+
+        return media.url
+
+    cached = find_cached_audio(
+        cache_dir(media.source),
+        media.key,
+    )
+
+    if cached is None:
+
+        return media.url
+
+    return str(cached)
+
+
 def play_item(
     source: Source,
     item: Media,
@@ -1116,12 +1153,17 @@ def play_item(
         None if audio else args.quality,
     )
 
+    target = playback_url(
+        media,
+        subtitles,
+    )
+
     if audio:
 
         if subtitles is not None and caption_style(args) == "bar":
 
             return captionbar.play(
-                media.url,
+                target,
                 subtitles,
                 chapters,
                 caption_scale(args),
@@ -1132,7 +1174,7 @@ def play_item(
             )
 
         return play_with_mpv(
-            media.url,
+            target,
             None,
             chapters,
             stream=media.stream,
@@ -1143,7 +1185,7 @@ def play_item(
         )
 
     return play_window(
-        media.url,
+        target,
         None,
         chapters,
         quality=args.quality,

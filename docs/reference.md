@@ -10,14 +10,14 @@ see [how-to guides](how-to.md); for the reasoning behind them, see
 subcast [url] [options]
 ```
 
-`url` is a YouTube video, playlist or channel, or an RTÉ Morning Ireland show
-or episode. If you omit it, subcast works on the latest Morning Ireland.
+`url` is a YouTube video, playlist or channel, or an RTÉ Radio 1 programme or
+episode. If you omit it, subcast works on the latest Morning Ireland.
 
 ## Options
 
 | Option | Effect |
 | --- | --- |
-| `<url>` | The item, listing or show to work on. Omitted: the latest RTÉ Morning Ireland. |
+| `<url>` | The item, listing or programme to work on. Omitted: the latest RTÉ Morning Ireland. |
 | `--list` | Print the listing and stop. |
 | `--limit N` | How many entries to play, newest first. Default `1`; `0` plays all. A menu shows the newest `SUBSCAST_LIMIT` (30 by default) unless `N` says otherwise. |
 | `--pick` | Print the listing and read a choice from it. |
@@ -25,7 +25,7 @@ or episode. If you omit it, subcast works on the latest Morning Ireland.
 | `--search QUERY` | Search YouTube instead of taking a URL. |
 | `--feed NAME` | Open a saved feed, by name or by its number in `--feeds`. |
 | `--feeds` | List the saved feeds and stop. |
-| `--add-feed` | Save the URL as a feed, named by `--name` or after the listing. |
+| `--add-feed` | Save the URL (a YouTube playlist or channel, or an RTÉ programme) as a feed, named by `--name` or after the listing. |
 | `--name NAME` | The name `--add-feed` saves the feed under. |
 | `--remove-feed NAME` | Forget the feed called `NAME`. |
 | `--save` | Download into `~/Videos/<source>/` instead of streaming, then stop. |
@@ -71,7 +71,7 @@ for YouTube.
 | `<id>.meta.json` (title, length, stream URLs) | 30 days, or until the title no longer matches |
 | `listings/<hash>.json` | 7 days; a menu refreshes it in the background anyway |
 | Signed stream URLs | reused until 10 minutes before they expire |
-| `<id>.srt` and `<id>.chapters.txt` | rendered from the cache on every run |
+| `<id>.srt`, `<id>.segments.json` and `<id>.chapters.txt` | rendered from the transcript on every run |
 | `<id>.live.srt` | written while a broadcast plays, and left behind afterwards |
 | Everything else | kept until you delete it; subcast deletes nothing on its own |
 
@@ -79,7 +79,7 @@ for YouTube.
 
 | Source | Behaviour |
 | --- | --- |
-| `rte` | Finds the latest Morning Ireland, or the episodes on a show page; reads the segment list RTÉ publishes; drives the RTÉ player in a headless browser for the stream URL. |
+| `rte` | Any RTÉ Radio 1 programme: its page is a listing, and an episode URL is one item. Reads the clip list and the programme's own schedule off the pages it fetches; drives the RTÉ player in a headless browser for the stream URL, which is why an item of this source is never played from its page URL. Its segment titles are placed by the clock times where the clip list carries them and by the spoken words where it does not, and a captioned episode plays the audio it was transcribed from rather than fetching the stream again. |
 | `youtube` | Lists videos, playlists and channels with `yt-dlp --flat-playlist`; reads chapters and caption tracks from the player JSON. A broadcast is marked as one: it is played as it airs, and captioned by transcribing it while it plays. |
 
 ## Keys
@@ -126,6 +126,8 @@ alone, so a stock mpv works.
 | Any other status | Reported as `mpv exited with <status>`. |
 | `Streams: resolved by subcast` | The player was given stream URLs from the cache. |
 | `Streams: mpv extracts them from the page` | The player was given the page URL and resolves it itself. |
+| `Streams: the stream URL subcast resolved` | The player was given the stream URL a resolve just found, for a source whose URL is a page it could not play. |
+| `Streams: the audio the captions were timed against` | The player was pointed at the audio this run transcribed, because a source that stitches ads in per request does not serve the same audio twice. |
 | `Using the cached transcript; not asking YouTube again.` | The cache satisfied the run. |
 | `Fetching captions: <language>` | A published caption track is being downloaded. |
 | `Published captions (<language>): <n> cues` | Published captions were used. |

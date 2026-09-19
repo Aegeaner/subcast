@@ -45,7 +45,7 @@ def test_timestamps_roll_over_correctly():
 def test_cues_survive_a_read_back(tmp_path: Path):
     wrapped = "a line long enough that it has to be broken before it is shown"
     cues = [
-        (600.0, 783.0, ">> 7.10am It Says in the Papers"),
+        (600.0, 783.0, ">> 7.10am Headlines"),
         (600.0, 603.5, "Good morning and welcome to the programme."),
         (603.5, 610.0, wrapped),
     ]
@@ -59,7 +59,7 @@ def test_cues_survive_a_read_back(tmp_path: Path):
         "00:10:00,000",
         "00:10:03,500",
     ]
-    assert parsed[0][2] == ">> 7.10am It Says in the Papers"
+    assert parsed[0][2] == ">> 7.10am Headlines"
     assert parsed[2][1] == "00:10:10,000"
     assert parsed[2][2].split() == wrapped.split()
 
@@ -90,9 +90,9 @@ def test_no_cues_writes_an_empty_file(tmp_path: Path):
 
 def test_long_cues_are_split_into_two_line_pieces():
     long_text = (
-        "As you could imagine, thirty-six hours approximately in that "
-        "container, and that may have been longer because there is a "
-        "language barrier, so it is unknown when they were put in."
+        "As you could imagine, the harbour tunnel has been closed since "
+        "early this morning, and it may stay closed for longer because "
+        "the survey is not finished, so it is unknown when it reopens."
     )
     cues = [(10.0, 21.0, long_text)]
 
@@ -132,8 +132,8 @@ def test_split_drops_blank_cues():
 
 def test_transcript_cues_survive_a_round_trip(tmp_path: Path):
     cues = [
-        (10.0, 13.5, "Potato production is down across Europe."),
-        (13.5, 17.0, "It's unknown when they were put in."),
+        (10.0, 13.5, "The harbour tunnel is under review."),
+        (13.5, 17.0, "It reopens when the survey is done."),
     ]
 
     path = save_cues(cues, tmp_path / "episode.cues.json")

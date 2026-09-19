@@ -47,7 +47,7 @@ def test_draw_paints_the_bottom_rows_without_scrolling():
     screen = captionbar.draw(
         "8am News Bulletin",
         [],
-        ["Good morning again, this is Morning Ireland"],
+        ["Good morning again, you're listening to Example Show"],
         rows=30,
         columns=100,
     )
@@ -56,7 +56,7 @@ def test_draw_paints_the_bottom_rows_without_scrolling():
 
     assert f"\x1b[{first_row};1H" in screen
     assert "8am News Bulletin" in screen
-    assert "Good morning again, this is Morning Ireland" in screen
+    assert "Good morning again, you're listening to Example Show" in screen
 
     # A newline on the last row would scroll the screen out from under
     # the playback, and the cursor has to come back where it was.
@@ -251,8 +251,8 @@ def test_the_previous_line_lingers_until_the_next_one_replaces_it():
 
 def test_a_long_current_line_keeps_only_the_tail_of_the_previous_one():
     cues = [
-        (0.0, 2.0, "The Taoiseach is in Manchester this morning."),
-        (2.0, 6.0, "And the rest of the front pages are about the budget."),
+        (0.0, 2.0, "The harbour tunnel is closed this morning."),
+        (2.0, 6.0, "And the rest of this morning's news is after the break."),
     ]
 
     _, history, current = captionbar.frame(cues, [], 3.0, width=30)

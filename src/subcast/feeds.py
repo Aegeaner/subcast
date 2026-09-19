@@ -181,18 +181,29 @@ def title_for(
 ) -> str:
     """
     What a listing calls itself, for a feed saved without a name.
+
+    The source is asked, through the hook it publishes - YouTube asks the
+    playlist, RTÉ reads the programme's page.
     """
 
-    from .sources import youtube
+    from .sources import detect
 
-    if not youtube.SOURCE.matches(url):
+    source = detect(url)
+
+    naming = getattr(
+        source,
+        "listing_title",
+        None,
+    )
+
+    if naming is None:
 
         raise RuntimeError(
             "--add-feed names a feed after the listing it saves, which "
-            "it can only ask YouTube for; give --name for another source"
+            "not every source can be asked for; give --name for this one"
         )
 
-    return youtube.listing_title(url)
+    return naming(url)
 
 
 def _no_such(

@@ -8,6 +8,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Any RTÉ Radio 1 programme**, not only Morning Ireland: a programme page
+  is a listing URL the way a YouTube channel is, so
+  `subcast https://www.rte.ie/radio/radio1/this-week/` plays its newest
+  episode and `--list`, `--pick`, `--limit`, `--save`, `--subs` and
+  `--audio-only` work on it unchanged. `--add-feed` saves one under the
+  programme's own name, read off its page, and a listing now carries the
+  length each episode card states, so a menu shows it before anything is
+  resolved.
+
+  Nothing in the code belongs to one programme any more: the schedule a
+  clock-titled clip ("8am News Bulletin") is measured against used to be
+  `SHOW_START_HOUR = 7` in `segments.py`, and is now read off the programme's
+  own page (`Mon - Fri • 07:00 - 09:00`) and carried to `place()` as
+  `Media.clock_start`. Morning Ireland's clips are the only ones that name a
+  clock time, so every other programme's clips are packed in published order
+  across the episode - which is what they were always going to be. The
+  programme page's newest episode is linked twice, from the hero card and
+  again with its date in the list below, so a listing keys episodes by id and
+  keeps the card that names the episode.
+
 - **Live broadcasts** are captioned as they air. A YouTube broadcast has no
   finished audio and usually no captions of its own, so `subcast <live url>
   --subs` takes the audio from the stream itself - yt-dlp's cheapest format
@@ -49,7 +69,48 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   format, so `bestaudio/best` was falling back to the whole 1080p stream
   (5421k against 144p's 290k, measured on the same broadcast).
 
+### Changed
+
+- **A captioned episode plays the audio it was transcribed from.** RTÉ stitches
+  ads into an episode per request - the same URL answers with different audio a
+  second apart - so a run transcribed one file and mpv streamed another, and
+  the captions could never be in pace however the segments were placed. The
+  file is what plays now (`cli.playback_url`), the segments are placed against
+  its length rather than the length the page states (`subtitles.prepare`), and
+  a plain play still downloads nothing and streams.
+
+- **Segment titles land where their words are said.** RTÉ's clip list for a
+  programme whose titles name no clock time is a menu of highlights, not the
+  running order: five *This Week* clips were placed by proportion at 48, 1038,
+  1275, 2260 and 3155 seconds, while their own words are said at 332, 1167,
+  1470, 2400 and 3057 - the error growing with each clip, and the last two
+  clips having aired in the other order. Each segment is now placed at the
+  mention of its own title, the list follows the transcript, and a word the
+  whole programme shares can no longer anchor anything
+  (`segments.ANCHOR_LIMIT`; that broadcast says "Trump" 81 times). A clip list
+  whose titles carry clock times - Morning Ireland's - is still a running
+  order, and its 17 segments come out exactly as before.
+
+  The placement is worked out again on every run from the cached transcript,
+  so the fix reaches an episode that was transcribed before it: the cached
+  *This Week* episode's titles moved onto the passages they name without
+  transcribing anything again. The subtitle, segments and chapters files are
+  rendered from the transcript, which is the only thing the cache has to keep.
+
 ### Fixed
+
+- A quoted word in a clip title kept its apostrophes as a keyword, so
+  "'Appalling' - Clare protestors say Trump not welcome" could never match "It
+  is appalling that we are spending taxpayers' money" and that segment was
+  placed by proportion alone.
+
+- **RTÉ episodes play again.** A listing item said `stream=True`, which is the
+  flag for "mpv resolves this URL itself" - true of a YouTube page, never of
+  an RTÉ one - so a run handed mpv the episode page: yt-dlp answers
+  `Unsupported URL`, mpv exits 2, and nothing played, on Morning Ireland as
+  much as on anything else. Both the listing and the resolve now say
+  `stream=False`, and `tests/test_cli.py` reads that through
+  `cli.plays_while_preparing` rather than through the field.
 
 - **Broadcasts play again.** What subcast asked mpv for kept yt-dlp off
   YouTube's HLS renditions (`[protocol^=https]`), and a broadcast is HLS and

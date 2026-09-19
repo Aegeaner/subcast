@@ -58,6 +58,13 @@ class Media:
     headers: tuple[tuple[str, str], ...] = ()
     stream: bool = True
     captions: tuple[Captions, ...] = ()
+
+    # A programme whose clip titles carry clock times ("8am News
+    # Bulletin"): the time of day its audio begins, in seconds since
+    # midnight, which is what those titles are measured against. Sources
+    # that publish no clock times leave it None.
+    clock_start: float | None = None
+
     segments: tuple[Segment, ...] = ()
 
     # A broadcast, not a file: its captions have to be made while it airs,
@@ -77,6 +84,9 @@ class Source(Protocol):
     subtitle pipeline calls when the caption URL it was handed does not
     itself yield WebVTT: sources whose captions come as playlists need it
     to get the text out their own way (yt-dlp, for YouTube).
+
+    A source that can name a listing may offer `listing_title(url)`, which
+    is what a feed saved without `--name` is called.
     """
 
     name: str

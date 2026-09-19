@@ -746,6 +746,33 @@ def stream_arguments(
     return arguments
 
 
+def streams_message(
+    url: str,
+    streams: Streams | None,
+    stream: bool,
+) -> str:
+    """
+    What mpv was given to play, and so what it has to extract for itself:
+    URLs a resolve found and kept, a page URL it extracts from, the stream
+    URL a resolve just found, or - for a captioned item - the audio that
+    was transcribed, which is the only audio the captions are in pace with.
+    """
+
+    if streams is not None:
+
+        return "    Streams: resolved by subcast"
+
+    if stream:
+
+        return "    Streams: mpv extracts them from the page"
+
+    if url.startswith(("http://", "https://")):
+
+        return "    Streams: the stream URL subcast resolved"
+
+    return "    Streams: the audio the captions were timed against"
+
+
 def play_with_mpv(
     url: str,
     subtitle_path: Path | None = None,
@@ -783,9 +810,11 @@ def play_with_mpv(
     )
 
     print(
-        "    Streams: resolved by subcast"
-        if streams is not None
-        else "    Streams: mpv extracts them from the page"
+        streams_message(
+            url,
+            streams,
+            stream,
+        )
     )
 
     if subtitle_path is not None:
@@ -926,9 +955,11 @@ def play_window(
     )
 
     print(
-        "    Streams: resolved by subcast"
-        if streams is not None
-        else "    Streams: mpv extracts them from the page"
+        streams_message(
+            url,
+            streams,
+            stream,
+        )
     )
 
     if subtitle_path is not None:

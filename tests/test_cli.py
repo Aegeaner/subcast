@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from subcast import cli, player
-from subcast.sources import Captions, Media
+from subcast import cli, config, player
+from subcast.sources import Captions, Media, rte
 
 PUBLISHED = (
     Captions(language="en", url="https://example.test/en.vtt"),
@@ -55,6 +55,10 @@ def args(
         search=search,
         feed=feed,
         url=url,
+        audio_only=False,
+        quality=1080,
+        subs_style="auto",
+        subs_scale="auto",
         whisper_model="small.en",
         whisper_device="auto",
     )
@@ -245,6 +249,21 @@ def test_a_source_mpv_resolves_plays_before_being_prepared():
     assert cli.plays_while_preparing(audio, playing=True) is False
 
 
+def test_a_listed_rte_episode_is_not_played_before_it_is_resolved():
+    """
+    An RTÉ item's URL is a page, and mpv cannot play a page: the stream
+    URL only comes out of the resolve. A listing that forgot to say so
+    would hand mpv the page and play nothing at all.
+    """
+
+    item = rte.SOURCE.episodes(
+        "https://www.rte.ie/radio/radio1/example-show/"
+        "episodes/00000001-0000-4000-8000-000000000001/"
+    )[0]
+
+    assert cli.plays_while_preparing(item, playing=True) is False
+
+
 def test_the_preparation_runs_beside_playback(monkeypatch):
     release = threading.Event()
     resolved: list[str] = []
@@ -298,6 +317,96 @@ def test_an_item_that_must_be_resolved_is_ready_before_playback(monkeypatch):
     assert job is not None
     assert job.done_yet() is True
     assert job.wait() is PREPARED
+
+
+def test_a_captioned_episode_plays_the_audio_it_transcribed(
+    monkeypatch,
+    tmp_path,
+):
+    """
+    RTÉ stitches ads into an episode per request - one URL answered with two
+    different files a second apart - so the audio a run transcribed and the
+    audio mpv would stream are not the same, and captions timed against one
+    cannot be in pace with the other. What plays is the file they were timed
+    against.
+    """
+
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
+
+    key = "098de349-266a-49e1-bdd3-b4c40107e6c4"
+
+    audio = tmp_path / "rte" / f"{key}.mp3"
+
+    audio.parent.mkdir(parents=True)
+    audio.write_bytes(b"audio")
+
+    played: list[str] = []
+
+    monkeypatch.setattr(
+        cli,
+        "play_with_mpv",
+        lambda url, *rest, **kwargs: played.append(url) or 0,
+    )
+
+    item = rte.SOURCE.episodes(
+        "https://www.rte.ie/radio/radio1/example-show/"
+        f"episodes/{key}/"
+    )[0]
+
+    assert cli.play_item(
+        rte.SOURCE,
+        item,
+        replace(item, duration=3593.0),
+        args(),
+        cli.PendingSubtitles.finished(PREPARED),
+    ) == 0
+
+    assert played == [str(audio)]
+
+
+def test_an_episode_nobody_captions_is_streamed(monkeypatch, tmp_path):
+    """
+    A plain play downloads nothing and streams, whatever is in the cache:
+    there are no captions to be in pace with.
+    """
+
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
+
+    key = "098de349-266a-49e1-bdd3-b4c40107e6c4"
+
+    audio = tmp_path / "rte" / f"{key}.mp3"
+
+    audio.parent.mkdir(parents=True)
+    audio.write_bytes(b"audio")
+
+    played: list[str] = []
+
+    monkeypatch.setattr(
+        cli,
+        "play_with_mpv",
+        lambda url, *rest, **kwargs: played.append(url) or 0,
+    )
+
+    item = rte.SOURCE.episodes(
+        "https://www.rte.ie/radio/radio1/example-show/"
+        f"episodes/{key}/"
+    )[0]
+
+    media = replace(
+        item,
+        url="https://example.test/audio.mp3",
+        duration=3593.0,
+    )
+
+    assert cli.play_item(
+        rte.SOURCE,
+        item,
+        media,
+        args(),
+        None,
+    ) == 0
+
+    assert played == ["https://example.test/audio.mp3"]
 
 
 def test_the_next_item_is_prepared_while_this_one_plays(monkeypatch):

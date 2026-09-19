@@ -14,6 +14,28 @@ subcast https://youtu.be/<id>
 
 With no URL, subcast plays the newest RTÉ Morning Ireland.
 
+## Play another RTÉ Radio 1 programme
+
+A programme's page is a listing, so everything below works on it: give subcast
+the URL you see in the browser.
+
+```
+subcast https://www.rte.ie/radio/radio1/this-week/
+subcast https://www.rte.ie/radio/radio1/this-week/ --pick
+```
+
+The first plays the newest episode of it, the second chooses from the episodes
+its page lists. Keep one to come back to by name:
+
+```
+subcast https://www.rte.ie/radio/radio1/this-week/ --add-feed
+subcast --feed "This Week"
+```
+
+A programme names itself, so `--name` is only needed to call it something else.
+Morning Ireland is still what no URL means, and every flag works the same way
+on any programme: `--subs`, `--save`, `--audio-only`, `--limit` and resume.
+
 ## Play audio only
 
 To skip the video window and read captions in the terminal, add

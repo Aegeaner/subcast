@@ -37,12 +37,12 @@ def test_filenames_lose_illegal_characters():
         "Morning_Ireland_ _live"
     )
     assert sanitize_filename("   spaced   out   ") == "spaced out"
-    assert sanitize_filename("...") == "Morning Ireland"
+    assert sanitize_filename("...") == "episode"
     assert len(sanitize_filename("x" * 400)) == 180
 
 
 def test_cache_lookup_ignores_partial_and_subtitle_files(tmp_path: Path):
-    key = "3b5345aa-d0e1-4e5a-9cb1-b4c900a4d056"
+    key = "00000001-0000-4000-8000-000000000001"
 
     (tmp_path / f"{key}.mp3").write_bytes(b"")
     (tmp_path / f"{key}.mp3.part").write_bytes(b"")

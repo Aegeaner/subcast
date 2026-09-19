@@ -48,7 +48,7 @@ def sanitize_filename(
     )
 
     if not name:
-        name = "Morning Ireland"
+        name = "episode"
 
     # Keep the filename reasonably short.
     return name[:180]

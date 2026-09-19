@@ -1,0 +1,47 @@
+<!--
+  Synthetic programme page used by the listing tests.
+
+  The real page links its newest episode twice - once from the hero card,
+  whose link holds nothing but an image and a call to action, and again
+  from the dated list under it - and states its schedule in the hero card.
+  Both properties are reproduced here, with an invented programme, dates
+  and identifiers instead of anything RTÉ published.
+-->
+<!doctype html>
+<html lang="en-IE">
+<head>
+<meta charset="utf-8">
+<title>Example Show - RTÉ Radio 1</title>
+<meta property="og:title" content="Example Show - RTÉ Radio 1">
+</head>
+<body>
+
+<nav>
+<a href="/radio/radio1/">RTÉ Radio 1</a>
+<a href="/radio/radio1/another-show/">Another Show</a>
+</nav>
+
+<div class="radio-card-wrapper hero-panel-wrapper show row">
+  <h3>Listen <span class="datetime" id="datetimePlayer">Sundays • 13:00 - 14:00</span></h3>
+  <div class="img-container row">
+    <div class="inner column small-12">
+      <a href="/radio/radio1/example-show/episodes/00000001-0000-4000-8000-000000000001">
+        <img alt="Example Show" src="https://example.test/images/001-1200.jpg">
+      </a>
+    </div>
+  </div>
+  <a href="/radio/radio1/example-show/episodes/00000001-0000-4000-8000-000000000001">Listen LATEST episode</a>
+</div>
+
+<div class="latest-episodes">
+  <a href="/radio/radio1/example-show/episodes/00000001-0000-4000-8000-000000000001/">Example Show - 13th September 2026 Sun 13 Sep  • 59 Mins • Example Show</a>
+  <a href="/radio/radio1/example-show/episodes/00000002-0000-4000-8000-000000000002/">Example Show - 6 September 2026 Sun 06 Sep  • 1 Hr 5 Mins • Example Show</a>
+  <a href="/radio/radio1/example-show/episodes/00000003-0000-4000-8000-000000000003/">Example Show - 30 August 2026 Sun 30 Aug  • 1 Hr 5 Mins • Example Show</a>
+</div>
+
+<div class="latest-clips">
+  <a href="/radio/radio1/clips/00000009-0000-4000-8000-000000000009/">A clip, which is not an episode</a>
+</div>
+
+</body>
+</html>

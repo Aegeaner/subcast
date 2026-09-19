@@ -1,3 +1,3 @@
-"""Morning Ireland: play or save the latest RTÉ episode."""
+"""Play or save an episode or video with subtitles."""
 
 __version__ = "0.2.0"
