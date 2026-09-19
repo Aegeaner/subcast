@@ -10,6 +10,7 @@ publishes and the chapters it already has.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -101,6 +102,45 @@ class Youtube:
         return parse_media(
             yt_dlp_json(media.url)
         )
+
+    @staticmethod
+    def video_id(
+        url: str,
+    ) -> str | None:
+        """
+        The video a URL names, if it names one: a watch link or a youtu.be
+        one.
+
+        Playlists, channels and searches name no single video; the
+        pipeline uses this to tell what it can look up in its own cache
+        instead of asking YouTube.
+        """
+
+        split = urlsplit(url)
+
+        if split.hostname == "youtu.be":
+
+            return split.path.strip("/").split("/")[0] or None
+
+        if split.hostname not in HOSTS:
+
+            return None
+
+        parts = [
+            part
+            for part in split.path.split("/")
+            if part
+        ]
+
+        if parts[:1] != ["watch"]:
+
+            return None
+
+        return dict(
+            part.split("=", 1)
+            for part in split.query.split("&")
+            if "=" in part
+        ).get("v") or None
 
     def caption_file(
         self,
@@ -553,7 +593,8 @@ def _choose_format(
     formats: object,
 ) -> Captions | None:
     """
-    A track's `vtt` format, or its first usable one.
+    The track's own `vtt` entry when it has one, and otherwise its first
+    usable entry asked for WebVTT.
     """
 
     if not isinstance(formats, list):
@@ -584,11 +625,42 @@ def _choose_format(
 
         return None
 
+    # An entry that is already WebVTT is used as it is; anything else is
+    # the same URL asked for WebVTT.
+    url = (
+        chosen["url"]
+        if chosen.get("ext") == "vtt"
+        else as_vtt(chosen["url"])
+    )
+
     return Captions(
         language=language,
-        url=chosen["url"],
+        url=url,
         ext="vtt",
     )
+
+
+def as_vtt(
+    url: str,
+) -> str:
+    """
+    The same caption URL, asked for WebVTT.
+
+    YouTube's own entries for a track include json3, srv1-3, ttml and srt,
+    and it serves WebVTT for any of them when asked: doing that here is
+    what saves the second extraction the fallback used to need. `fmt` is
+    not part of the signature, so rewriting it is safe.
+    """
+
+    without = re.sub(
+        r"[&?]fmt=[^&]*",
+        "",
+        url,
+    )
+
+    joiner = "&" if "?" in without else "?"
+
+    return f"{without}{joiner}fmt=vtt"
 
 
 def _seconds(

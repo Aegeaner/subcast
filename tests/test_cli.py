@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import time
+from dataclasses import replace
 
 from subcast import cli, player
 from subcast.sources import Captions, Media
@@ -39,11 +41,12 @@ def args(
 def media(
     captions: tuple[Captions, ...] = (),
     duration: float | None = 300.0,
+    title: str = "A video",
 ) -> Media:
     return Media(
         source="youtube",
         key="abc",
-        title="A video",
+        title=title,
         url="https://youtu.be/abc",
         duration=duration,
         captions=captions,
@@ -63,6 +66,145 @@ def test_transcribing_needs_to_be_asked_for():
     assert not cli.wants_subtitles(media(), args())
     assert cli.wants_subtitles(media(), args(subs=True))
     assert cli.wants_subtitles(media(), args(subs_from="asr"))
+
+
+def test_a_cached_transcript_is_subtitles_too(monkeypatch):
+    """
+    An item whose transcript is on disk needs no resolve, so nothing about
+    it says it has captions - the cache is what says so.
+    """
+
+    monkeypatch.setattr(cli, "has_transcript", lambda media: False)
+
+    assert not cli.wants_subtitles(media(), args())
+
+    monkeypatch.setattr(cli, "has_transcript", lambda media: True)
+
+    assert cli.wants_subtitles(media(), args())
+
+
+def test_a_replay_does_not_ask_youtube_again(monkeypatch):
+    """
+    mpv resolves the stream URL itself, and the captions, chapters and
+    length are on disk, so a cached item is played as the listing gave it.
+    """
+
+    monkeypatch.setattr(cli, "has_transcript", lambda media: True)
+    monkeypatch.setattr(cli.meta, "fresh", lambda media: True)
+    monkeypatch.setattr(cli.meta, "save", lambda media: None)
+
+    class Source:
+        def resolve(self, media):
+            raise AssertionError("resolved an item that was already known")
+
+    item = media()
+
+    assert cli.resolve_item(Source(), item) is item
+
+
+def test_a_replay_does_not_ask_what_a_url_points_at(monkeypatch):
+    """
+    A watch link and a cached transcript name everything a replay needs,
+    so the listing call - the last round trip before mpv starts - goes too.
+    """
+
+    monkeypatch.setattr(cli, "has_transcript", lambda media: True)
+
+    monkeypatch.setattr(
+        cli.meta,
+        "read",
+        lambda source, key: cli.meta.Known(
+            title="A talk",
+            duration=812.5,
+            resolved=time.time(),
+        ),
+    )
+
+    class Source:
+        name = "youtube"
+
+        @staticmethod
+        def video_id(url):
+            return "abc123"
+
+        def episodes(self, url, limit=None):
+            raise AssertionError("listed a URL whose item was cached")
+
+    item = cli.cached_item(Source(), "https://www.youtube.com/watch?v=abc123")
+
+    assert item.key == "abc123"
+    assert item.title == "A talk"
+    assert item.duration == 812.5
+    assert item.stream
+
+
+def test_a_stale_resolve_is_listed_again(monkeypatch):
+    monkeypatch.setattr(cli, "has_transcript", lambda media: True)
+
+    monkeypatch.setattr(
+        cli.meta,
+        "read",
+        lambda source, key: cli.meta.Known(
+            title="A talk",
+            duration=812.5,
+            resolved=time.time() - cli.meta.RESOLVE_TTL - 1,
+        ),
+    )
+
+    class Source:
+        name = "youtube"
+
+        @staticmethod
+        def video_id(url):
+            return "abc123"
+
+    assert cli.cached_item(Source(), "https://youtu.be/abc123") is None
+
+
+def test_a_url_that_names_no_video_is_listed(monkeypatch):
+    """A playlist or channel has to be asked about: it names no one video."""
+
+    monkeypatch.setattr(cli, "has_transcript", lambda media: True)
+    monkeypatch.setattr(
+        cli.meta,
+        "read",
+        lambda source, key: (_ for _ in ()).throw(
+            AssertionError("read metadata for a listing")
+        ),
+    )
+
+    class Source:
+        name = "youtube"
+
+        @staticmethod
+        def video_id(url):
+            return None
+
+    assert cli.cached_item(Source(), "https://www.youtube.com/@BBCNews") is None
+
+
+def test_an_item_whose_stream_url_we_must_find_is_resolved(monkeypatch):
+    """
+    RTÉ is stream=False: its listing URL is a page, so playback needs the
+    stream URL a resolve finds, cached transcript or not.
+    """
+
+    monkeypatch.setattr(cli, "has_transcript", lambda media: True)
+    monkeypatch.setattr(cli.meta, "fresh", lambda media: True)
+
+    saved: list[str] = []
+    monkeypatch.setattr(cli.meta, "save", lambda media: saved.append(media.title))
+
+    resolved = media(title="Resolved")
+
+    class Source:
+        def resolve(self, media):
+            return resolved
+
+    item = replace(resolved, kind="audio", stream=False)
+
+    assert cli.resolve_item(Source(), item) is resolved
+    assert saved == ["Resolved"]
 
 
 def test_playing_starts_where_the_item_was_left(

@@ -251,6 +251,11 @@ def fetch_captions(
 
     try:
 
+        print(
+            f"    Fetching captions: {captions.language}",
+            flush=True,
+        )
+
         text = _download_caption_text(
             captions.url,
             session,

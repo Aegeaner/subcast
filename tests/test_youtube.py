@@ -15,6 +15,7 @@ import pytest
 from subcast.sources import Captions, Media, Segment, youtube
 from subcast.sources.youtube import (
     SOURCE,
+    as_vtt,
     audio_download,
     flatten_url,
     listing_title,
@@ -323,12 +324,34 @@ def test_any_language_beats_no_captions():
     assert parse_media(payload).captions == ()
 
 
-def test_a_track_without_vtt_falls_back_to_its_first_format():
+@pytest.mark.parametrize(
+    ("url", "wanted"),
+    [
+        ("https://www.youtube.com/watch?v=abc123", "abc123"),
+        ("https://www.youtube.com/watch?v=abc123&t=30s", "abc123"),
+        ("https://youtu.be/abc123", "abc123"),
+        ("https://youtu.be/abc123?t=30", "abc123"),
+        ("https://www.youtube.com/playlist?list=PL1", None),
+        ("https://www.youtube.com/@BBCNews", None),
+        ("https://www.youtube.com/watch", None),
+        ("https://example.test/watch?v=abc123", None),
+    ],
+)
+def test_a_watch_link_names_its_video(url: str, wanted: str | None):
+    assert SOURCE.video_id(url) == wanted
+
+
+def test_a_track_without_vtt_is_asked_for_vtt():
+    """
+    YouTube serves WebVTT for any of a track's formats when the URL asks
+    for it, which is what keeps a second extraction out of the run.
+    """
+
     payload = video()
 
     payload["subtitles"] = {
         "en": [
-            {"ext": "json3", "url": "https://example.test/en.json3"},
+            {"ext": "json3", "url": "https://example.test/en.json3?fmt=json3"},
         ],
     }
 
@@ -337,10 +360,31 @@ def test_a_track_without_vtt_falls_back_to_its_first_format():
     assert parse_media(payload).captions == (
         Captions(
             language="en",
-            url="https://example.test/en.json3",
+            url="https://example.test/en.json3?fmt=vtt",
             ext="vtt",
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ("given", "wanted"),
+    [
+        # a format the URL does not name yet
+        ("https://example.test/en", "https://example.test/en?fmt=vtt"),
+        # one it names, in the middle of other parameters
+        (
+            "https://example.test/en?lang=en&fmt=srv3&signature=abc",
+            "https://example.test/en?lang=en&signature=abc&fmt=vtt",
+        ),
+        # already WebVTT: asking again changes nothing
+        (
+            "https://example.test/en?v=x&fmt=vtt",
+            "https://example.test/en?v=x&fmt=vtt",
+        ),
+    ],
+)
+def test_as_vtt_asks_for_webvtt(given: str, wanted: str):
+    assert as_vtt(given) == wanted
 
 
 def test_a_live_video_has_no_duration():

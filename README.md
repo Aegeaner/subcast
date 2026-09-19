@@ -245,7 +245,7 @@ realtime, so ~9 minutes for a two-hour show) is the default;
 | --- | --- |
 | `--save` | `~/Videos/<source>/<title>.mp3` (RTÉ) or `.mp4` (YouTube) |
 | Subtitles | `$XDG_CACHE_HOME/subcast/<source>/<id>.{srt,chapters.txt}` |
-| Cache | `$XDG_CACHE_HOME/subcast/<source>/<id>.{mp3,mp4,cues.json,segments.json}` |
+| Cache | `$XDG_CACHE_HOME/subcast/<source>/<id>.{mp3,mp4,cues.json,segments.json,meta.json}` |
 | Playback position | `$XDG_CACHE_HOME/subcast/<source>/<id>.position` |
 | Feeds | `$XDG_CONFIG_HOME/subcast/feeds.json` — the one file here that is the user's rather than the tool's |
 
@@ -308,6 +308,11 @@ templates.
 - `SUBSCAST_LIMIT` sets how many entries a menu shows (30 by default);
   `--limit N` overrides it for one run, and `--limit 0` asks for the whole
   listing. `subcast --help` lists the rest.
+- A replay is cheap: the transcript, the captions, the chapters and what a
+  resolve learned (its title and length, in `<id>.meta.json`) are all in
+  the cache, so playing a video again asks YouTube nothing — the watch
+  link and the cache name everything. The resolve is asked for again once
+  the metadata is a month old, or when the title no longer matches.
 - Stream URLs are signed and short-lived, and YouTube's edge answers 403
   on a freshly minted one now and then. A stream mpv cannot load is
   therefore fetched and tried once more (`mpv could not load that stream`)

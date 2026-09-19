@@ -56,6 +56,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Playing a video again no longer asks YouTube anything. What a resolve
+  learned (title, length, when) is written beside the transcript, so a
+  replay whose captions are cached skips both the resolve and the listing
+  call: measured on a published-captions video, `--no-play` went from 2.6s
+  to 0.18s. A caption URL that is not WebVTT is now asked for WebVTT
+  instead of costing a second extraction (6.7s when it happened); the
+  yt-dlp fallback is still there for what that cannot rescue. Sources whose
+  stream URL has to be found first (RTÉ) are resolved as before, and the
+  steps that remain say what they are doing (`Resolving:`,
+  `Fetching captions:`) instead of waiting in silence.
 - Cached audio, transcripts and subtitles moved under `~/.cache/subcast/<source>/`,
   and saved episodes under `~/Videos/<source>/`, so paths no longer assume
   one show. Existing caches keep working if moved into those directories.

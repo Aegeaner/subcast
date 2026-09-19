@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from . import captionbar, config, feeds, picker
+from . import captionbar, config, feeds, meta, picker
 from .config import DEFAULT_WHISPER_MODEL, cache_dir, save_dir
 from .media import acquire, download_audio, sanitize_filename
 from .player import Positions, play_window, play_with_mpv
@@ -475,6 +475,61 @@ def forget_feed(
     return 0
 
 
+def cached_item(
+    source: Source,
+    url: str,
+) -> Media | None:
+    """
+    A single video whose transcript is already cached, as the item the
+    source would have listed it as.
+
+    Asking what a URL points at is the last round trip a replay makes, and
+    it is not needed at all when the answer is on disk: the source's own id
+    says which video it is, and what a previous resolve wrote down says
+    what to call it and how long it is.
+    """
+
+    find = getattr(
+        source,
+        "video_id",
+        None,
+    )
+
+    if find is None:
+
+        return None
+
+    key = find(url)
+
+    if not key:
+
+        return None
+
+    known = meta.read(
+        source.name,
+        key,
+    )
+
+    if known is None or known.stale:
+
+        return None
+
+    item = Media(
+        source=source.name,
+        key=key,
+        title=known.title,
+        url=url,
+        duration=known.duration,
+        stream=True,
+    )
+
+    if not has_transcript(item):
+
+        return None
+
+    return item
+
+
 def collect(
     source: Source,
     url: str,
@@ -483,6 +538,15 @@ def collect(
     """
     What the URL points at: one item, or many for a playlist or listing.
     """
+
+    known = cached_item(
+        source,
+        url,
+    )
+
+    if known is not None:
+
+        return [known]
 
     items = source.episodes(
         url,
@@ -572,14 +636,51 @@ def wants_subtitles(
     Always when asked, and whenever the source already publishes them -
     those cost a download where transcribing costs minutes of GPU. Asking
     for local transcription (`--subs-from asr`) is asking for subtitles
-    too.
+    too, and so is a transcript a previous run already left in the cache.
     """
 
     return bool(
         args.subs
         or media.captions
         or args.subs_from == "asr"
+        or has_transcript(media)
     )
+
+
+def resolve_item(
+    source: Source,
+    item: Media,
+) -> Media:
+    """
+    What to play: the item resolved, or the item as the listing gave it
+    when a previous run already learned what this run needs.
+
+    A resolve is the slowest part of a YouTube run, and on that source it
+    buys only metadata: mpv is handed the page URL and asks yt-dlp for the
+    stream itself, and the captions, chapters and length are on disk from
+    last time. Sources whose stream URL has to be found first - RTÉ - are
+    always resolved, since there is nothing to play without it.
+    """
+
+    if item.stream and has_transcript(item) and meta.fresh(item):
+
+        print(
+            "    Using the cached transcript; not asking YouTube again.",
+            flush=True,
+        )
+
+        return item
+
+    print(
+        f"    Resolving: {item.url}",
+        flush=True,
+    )
+
+    media = source.resolve(item)
+
+    meta.save(media)
+
+    return media
 
 
 def prepare_item(
@@ -790,7 +891,10 @@ def main() -> int:
                 flush=True,
             )
 
-            media = target.source.resolve(item)
+            media = resolve_item(
+                target.source,
+                item,
+            )
 
             print(
                 f"    {media.title}"
