@@ -25,11 +25,16 @@ from pathlib import Path
 
 from .player import mpv_path
 
-# Rows the block occupies: one title line plus two caption lines. Kept
-# constant so the terminal does not reflow as captions come and go.
-BLOCK_ROWS = 3
+# Rows the block occupies: one title line, the previous line of dialogue,
+# and up to two lines of what is being said now. Kept constant so the
+# terminal does not reflow as captions come and go.
+BLOCK_ROWS = 4
 
 CAPTION_LINES = BLOCK_ROWS - 1
+
+# How many lines the current cue may occupy before it pushes the previous
+# one off the block.
+CURRENT_LINES = 2
 
 # Scale used for the block when the terminal can render scaled text and
 # the user did not say otherwise.
@@ -50,6 +55,7 @@ MAX_SCALE = 3
 SIZING_QUERY = "\x1b[6n"
 
 TITLE_COLOUR = "\x1b[2;36m"  # faint cyan: readable, not competing
+HISTORY_COLOUR = "\x1b[2;37m"  # the line that just finished
 CAPTION_COLOUR = "\x1b[97m"  # bright white
 MUTED_MARK = " [muted]"
 
@@ -342,10 +348,14 @@ def frame(
     segments: list[tuple[float, float, str]],
     position: float,
     width: int,
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[str], list[str]]:
     """
-    What belongs on screen at `position`: the segment title playing, and
-    the dialogue, wrapped to width and capped at two lines.
+    What belongs on screen at `position`: the segment title playing, the
+    line that has just finished, and the line being spoken.
+
+    The previous line lingers under the title until the next one takes its
+    place, so a caption never vanishes mid-read. Returns the rows in the
+    order they are drawn, top first.
     """
 
     title = ""
@@ -356,19 +366,38 @@ def frame(
             title = segment_title
             break
 
-    captions: list[str] = []
+    active: int | None = None
 
-    for start, end, text in cues:
+    for index, (start, end, text) in enumerate(cues):
 
         if start <= position < end:
-            captions.extend(
-                textwrap.wrap(
-                    " ".join(text.split()),
-                    width=width,
-                )
-            )
+            active = index
+            break
 
-    return title, captions[:CAPTION_LINES]
+    if active is None:
+        return title, [], []
+
+    current = textwrap.wrap(
+        " ".join(cues[active][2].split()),
+        width=width,
+    )[:CURRENT_LINES]
+
+    history: list[str] = []
+
+    room = CAPTION_LINES - len(current)
+
+    if active > 0 and room > 0:
+
+        previous = textwrap.wrap(
+            " ".join(cues[active - 1][2].split()),
+            width=width,
+        )
+
+        # What was being read most recently is the tail of the previous
+        # cue; when the current one is short there is room for all of it.
+        history = previous[-room:]
+
+    return title, history, current
 
 
 def clear_block(
@@ -405,7 +434,8 @@ def clear_block(
 
 def draw(
     title: str,
-    captions: list[str],
+    history: list[str],
+    current: list[str],
     rows: int,
     columns: int,
     muted: bool = False,
@@ -427,7 +457,8 @@ def draw(
         title + (MUTED_MARK if muted else "")
     ]
 
-    lines.extend(captions)
+    lines.extend(history)
+    lines.extend(current)
 
     while len(lines) < BLOCK_ROWS:
         lines.append("")
@@ -447,10 +478,20 @@ def draw(
 
     parts = [SAVE_CURSOR]
 
+    colours = [TITLE_COLOUR]
+
+    for index in range(1, BLOCK_ROWS):
+
+        colours.append(
+            HISTORY_COLOUR
+            if index <= len(history)
+            else CAPTION_COLOUR
+        )
+
     for index, (line, colour) in enumerate(
         zip(
             lines,
-            (TITLE_COLOUR, CAPTION_COLOUR, CAPTION_COLOUR),
+            colours,
         )
     ):
 
@@ -562,6 +603,7 @@ def play(
     chapters_path: Path | None = None,
     scale: int | None = None,
     warn_about_scale: bool = False,
+    stream: bool = False,
 ) -> int:
     """
     Play url through mpv with our own caption block. Returns mpv's exit
@@ -622,6 +664,17 @@ def play(
         "--msg-level=all=warn",
         f"--input-ipc-server={socket_path}",
     ]
+
+    if stream:
+
+        # A page URL (YouTube): mpv resolves it through yt-dlp, and the
+        # block only cares about the audio.
+        command.extend(
+            [
+                "--ytdl=yes",
+                "--ytdl-format=bestaudio/best",
+            ]
+        )
 
     if chapters_path is not None:
 
@@ -720,7 +773,7 @@ def _follow(
                 columns,
             )
 
-            title, captions = frame(
+            title, history, current = frame(
                 cues,
                 segments,
                 float(position),
@@ -732,7 +785,8 @@ def _follow(
 
             screen = draw(
                 title,
-                captions,
+                history,
+                current,
                 rows=max(lines, BLOCK_ROWS),
                 columns=columns,
                 muted=muted,
@@ -781,6 +835,7 @@ def _follow(
         sys.stdout.write(
             draw(
                 "",
+                [],
                 [],
                 rows=max(
                     final_lines,
