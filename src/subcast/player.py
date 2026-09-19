@@ -197,13 +197,19 @@ class Ipc:
         """
         A property's value, or None when mpv has no answer to give - which
         is what an unavailable property is, and what a dead socket is.
+
+        Every mpv reply carries an `error` field, and "success" is what it
+        says when it is answering: reading that field as a verdict rather
+        than as its value is what made this return None for every property
+        there is, which quietly turned resumes and end-of-file detection
+        into no-ops.
         """
 
         message = self._request(
             ["get_property", name]
         )
 
-        if message is None or "error" in message:
+        if message is None or message.get("error") not in (None, "success"):
 
             return None
 
@@ -602,6 +608,12 @@ def play_with_mpv(
         f"    {url}"
     )
 
+    print(
+        "    Streams: resolved by subcast"
+        if streams is not None
+        else "    Streams: mpv extracts them from the page"
+    )
+
     if subtitle_path is not None:
         print(
             f"    {subtitle_path}"
@@ -722,6 +734,12 @@ def play_window(
         f"    {url}"
     )
 
+    print(
+        "    Streams: resolved by subcast"
+        if streams is not None
+        else "    Streams: mpv extracts them from the page"
+    )
+
     if subtitle_path is not None:
         print(
             f"    {subtitle_path}"
@@ -740,8 +758,18 @@ def play_window(
 
         if streams is None:
 
+            # `[protocol^=https]` keeps yt-dlp off YouTube's HLS
+            # renditions: the height filter alone lands on its 1080p
+            # "premium" one, 4600k of HLS where the DASH formats next to
+            # it are 1417k (AV1) and 2130k (VP9) - measured on the video
+            # from the report. The wait before the first frame here is
+            # mpv filling its cache, so it is that bitrate the wait is
+            # made of; `/best` is the fallback for a source that offers
+            # nothing else.
+            #
             command.append(
-                f"--ytdl-format=bestvideo[height<={quality}]+bestaudio/"
+                f"--ytdl-format=bestvideo[height<={quality}]"
+                f"[protocol^=https]+bestaudio/"
                 f"best"
             )
 

@@ -109,8 +109,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--list` prints a page of the listing now — the newest 30, or `--limit N`
   — instead of the single entry playback would have stopped at.
 
+- Playback no longer plays 1080p through YouTube's "premium" HLS
+  rendition. Subcast's own resolve only ever hands over DASH URLs; the
+  format argument mpv extracts with now says the same, so both paths land
+  on the same stream. Measured on the video from the report: a height
+  filter alone picked itag 616 (1080p, HLS, 4600k) where the DASH formats
+  beside it are 399 (AV1, 1417k) and 248 (VP9, 2130k) - 17.25MB to fill a
+  30-second buffer against 5.31MB, and on a link YouTube throttles that
+  bitrate is the whole wait before the first frame. A replay measured
+  4.11s to the first frame against 5.33s on the VP9 format chosen before.
+  What a format costs now decides between formats of one height, with the
+  codec that gets the same picture out of fewest bytes preferred.
+- A run says which of the two things mpv was given. The page URL is
+  printed either way, so `Streams: resolved by subcast` against `Streams:
+  mpv extracts them from the page` is what tells the paths apart - and
+  which one it was is what a run's start-up wait is made of.
+
 ### Fixed
 
+- Resume, end-of-file detection and every other mpv property read were
+  silently returning nothing: the IPC client read mpv's `error` field as a
+  verdict rather than as its value, and every reply mpv gives carries
+  `"error": "success"` when it is answering. A run's position was therefore
+  never written down, so the resume feature had nothing to resume from, and
+  an item watched to the end was never forgotten either. Nothing failed
+  visibly - the reads just came back empty, which is also what an
+  unavailable property looks like.
 - A caption track YouTube refuses is followed by the track it was
   translated from. Translated tracks are the ones YouTube rate-limits
   (HTTP 429) — a video whose detected source language YouTube got wrong is

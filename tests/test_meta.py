@@ -152,6 +152,39 @@ def test_the_picture_is_capped_and_the_sound_is_the_best(
     assert streams.first == SMALLER["url"]
 
 
+def test_the_codec_that_costs_least_is_chosen_at_the_same_height(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    Two formats of one picture height are not the same picture for the same
+    money: measured on the video from the report, 1080p AV1 asks for 1417k
+    where 1080p VP9 asks for 2130k, and what a stream costs is what a slow
+    link waits for.
+    """
+
+    in_cache(monkeypatch, tmp_path)
+
+    vp9 = {
+        **VIDEO,
+        "format_id": "248",
+        "url": "https://example.test/vp9?expire=9999999999",
+        "vcodec": "vp9",
+        "tbr": 2130.0,
+    }
+    av1 = {
+        **VIDEO,
+        "format_id": "399",
+        "url": "https://example.test/av1?expire=9999999999",
+        "vcodec": "av01.0.08M.08",
+        "tbr": 1417.0,
+    }
+
+    meta.save(media(), [vp9, av1, AUDIO])
+
+    assert meta.streams(media(), quality=1080).video == av1["url"]
+
+
 def test_sound_only_asks_for_sound(monkeypatch, tmp_path: Path):
     in_cache(monkeypatch, tmp_path)
 

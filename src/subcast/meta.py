@@ -247,7 +247,9 @@ def streams(
     `quality` is the picture to cap at, and None asks for sound only - the
     same choice the format argument mpv would have been given makes
     (`bestvideo[height<=quality]+bestaudio`, falling back to the best single
-    stream), so that handing mpv URLs does not change what is played.
+    stream), so that handing mpv URLs does not change what is played. What
+    a format charges decides the rest: at one height a codec that gets the
+    same picture out of fewer bytes is what a slow link feels least.
     """
 
     known = read(
@@ -376,15 +378,32 @@ def _best(
     )
 
 
+# Codecs scored by the picture they get out of a byte: at one height AV1
+# costs 1417k where VP9 costs 2130k, so a bitrate says what a format charges
+# rather than what it shows - which leaves the codec to decide between
+# formats of the same height, and the bitrate to break ties within one.
+CODEC_SCORES = {
+    "av01": 2,
+    "vp9": 1,
+    "vp09": 1,
+}
+
+
 def _standing(
     entry: dict,
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
     """
-    How good a format is: its picture first, then its bitrate.
+    How good a format is: its picture, then its codec, then its bitrate.
     """
+
+    codec = str(
+        entry.get("vcodec")
+        or ""
+    ).split(".")[0]
 
     return (
         float(entry.get("height") or 0),
+        float(CODEC_SCORES.get(codec, 0)),
         float(
             entry.get("tbr")
             or entry.get("abr")

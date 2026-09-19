@@ -164,7 +164,9 @@ mpv was left to extract — so the watch
 link and the cache are all the run needs to start: the resolve, the caption
 download and (where the video has no captions) the transcription all happen
 beside the playback, and the subtitle file is handed to mpv mid-playback
-the moment it is ready. A run of several items — a feed, a playlist, a menu
+the moment it is ready. Both paths ask for the same stream, so what
+`--quality` caps and which formats are acceptable do not depend on which
+one a run took. A run of several items — a feed, a playlist, a menu
 selection — prepares the next one once the current one's own preparation is
 done, so each item after the first starts without waiting either. A stream
 mpv cannot load — sites refuse one every so often — is answered by handing

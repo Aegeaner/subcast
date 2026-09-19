@@ -112,6 +112,87 @@ def test_streams_are_handed_to_mpv_instead_of_a_page():
     ]
 
 
+def test_the_run_says_which_of_the_two_things_mpv_gets(monkeypatch, capsys):
+    """
+    The page URL is printed either way, so it cannot tell a reader whether
+    mpv was handed the resolved URLs or the page to extract - which is what
+    the waiting time is made of.
+    """
+
+    monkeypatch.setattr(player, "mpv_path", lambda: "mpv")
+    monkeypatch.setattr(player, "run_mpv", lambda *args, **kwargs: 0)
+
+    player.play_window("https://example.test/watch")
+    assert "Streams: mpv extracts them from the page" in capsys.readouterr().out
+
+    player.play_window(
+        "https://example.test/watch",
+        streams=Streams(video="https://example.test/video", audio=None),
+    )
+    assert "Streams: resolved by subcast" in capsys.readouterr().out
+
+
+class FakeSocket:
+    """A socket that only records what was asked."""
+
+    def __init__(self) -> None:
+        self.sent: list[bytes] = []
+
+    def sendall(self, data: bytes) -> None:
+        self.sent.append(data)
+
+
+def test_a_property_mpv_answers_is_read_back(monkeypatch):
+    """
+    Every reply mpv gives carries an `error` field, and "success" is the
+    value it has when mpv is answering: reading that field as a verdict is
+    what made this return nothing for every property there is, which
+    quietly turned resumes, end-of-file detection and the arrival rate into
+    no-ops until a rate had to be read.
+    """
+
+    client = player.Ipc.__new__(player.Ipc)
+    client.socket = FakeSocket()
+    client.buffer = b""
+    client.request_id = 0
+
+    replies = iter(
+        [
+            '{"data": 6.5, "request_id": 1, "error": "success"}',
+            '{"request_id": 2, "error": "property unavailable"}',
+        ]
+    )
+    monkeypatch.setattr(client, "_read_line", lambda: next(replies))
+
+    assert client.get("time-pos") == 6.5
+    assert client.get("nonsense") is None
+
+
+def test_the_format_argument_stays_off_hls(monkeypatch, capsys):
+    """
+    A height filter alone lands on YouTube's 1080p "premium" HLS rendition
+    (4600k, measured) where the DASH formats beside it are 1417k and 2130k
+    - and the wait before the first frame on this path is mpv filling its
+    cache, so the bitrate is the wait.
+    """
+
+    monkeypatch.setattr(player, "mpv_path", lambda: "mpv")
+
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        player,
+        "run_mpv",
+        lambda command, *args, **kwargs: commands.append(command) or 0,
+    )
+
+    player.play_window("https://example.test/watch", quality=1080)
+
+    assert (
+        "--ytdl-format=bestvideo[height<=1080][protocol^=https]"
+        "+bestaudio/best"
+    ) in commands[0]
+
+
 def test_one_url_needs_no_external_track():
     assert player.stream_arguments(
         Streams(video="https://example.test/both", audio=None)
