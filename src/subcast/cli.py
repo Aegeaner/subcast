@@ -36,13 +36,14 @@ from .subtitles import prepare_subtitles
 
 def caption_scale(
     args: argparse.Namespace,
-) -> int:
+) -> int | None:
     """
-    Requested caption size multiplier.
+    Requested caption size multiplier, or None to size captions to the
+    window.
     """
 
     if args.subs_scale == "auto":
-        return captionbar.DEFAULT_SCALE
+        return None
 
     return int(args.subs_scale)
 
@@ -119,8 +120,9 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Caption size for --subs-style=bar, as a multiple of the "
             "terminal font. Needs a terminal that renders scaled text "
-            "(kitty 0.40+) and falls back to 1 elsewhere; 'auto' uses "
-            "2 there (default: auto)."
+            "(kitty 0.40+) and falls back to 1 elsewhere; 'auto' sizes "
+            "the captions to the window — 1x when narrow, up to 3x "
+            "maximised (default: auto)."
         ),
     )
 
