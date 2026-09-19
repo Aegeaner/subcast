@@ -2,15 +2,24 @@
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-Play or save the latest [RTÉ Morning Ireland](https://www.rte.ie/radio/radio1/morning-ireland/)
-episode, with subtitles generated locally and the segment titles RTÉ
-publishes for the episode shown above them, so you can see what is coming
-up and jump from segment to segment in mpv.
+Play or save an episode or video with subtitles: the captions a site
+already publishes where there are any, local Whisper transcription where
+there are not. Segment titles ride above the dialogue, and you can jump
+between them in mpv.
 
-> **Status: 0.1.0, one source.** Today it knows RTÉ Morning Ireland. The
-> pipeline underneath (media → transcript → segments → artifacts → player)
-> is source-agnostic; other sources, including local files, arbitrary URLs
-> and YouTube, are the next release. See [Roadmap](#roadmap).
+```
+subcast                                  # latest RTÉ Morning Ireland
+subcast https://youtu.be/<id>            # a YouTube video
+subcast "https://www.youtube.com/@channel/videos" --limit 5
+subcast <url> --list                     # what does this URL point at?
+```
+
+Sources today: **RTÉ Morning Ireland** (audio, transcribed locally, segment
+titles from the clip list RTÉ publishes) and **YouTube** (videos, playlists
+and channels, using the captions and chapters YouTube already has). The
+pipeline underneath — media → transcript → segments → artifacts → player —
+is source-agnostic; local files, arbitrary URLs and RSS feeds are next (see
+[Roadmap](#roadmap)).
 
 ```
 $ subcast --subs
@@ -33,8 +42,10 @@ and Sarah McInerney. We're here with you until nine...
 
 - Python 3.10 or newer
 - `mpv` for playback, `ffmpeg`/`ffprobe` for duration probing
-- Chromium for Playwright (installed with the tool, see below)
-- `faster-whisper` for `--subs`, pulled in by the `subs` extra
+- `yt-dlp` for YouTube (`pip install "subcast[youtube]"`, or your package
+  manager); mpv is pointed at the page URL and resolves it itself
+- Chromium for Playwright, used only by the RTÉ source (see below)
+- `faster-whisper` for transcription, pulled in by the `subs` extra
 
 ## Install
 
@@ -84,14 +95,23 @@ both is fine. Just install Chromium for whichever one you run.
 ## Usage
 
 ```
-subcast                     # play the latest episode through mpv
-subcast --save              # download it to ~/Videos/MorningIreland/
-subcast --subs              # transcribe, then play with captions
-subcast --save --subs       # keep audio + .srt + chapters
-subcast --subs-style=osd    # let mpv print captions instead
-subcast --whisper-device cpu
-subcast --whisper-model medium.en
+subcast <url>                  # play it: video in an mpv window
+subcast <url> --list           # list a playlist, channel or show listing
+subcast <url> --limit 5        # play five entries in turn (0 = all)
+subcast <url> --audio-only     # audio plus terminal captions, no video
+subcast <url> --subs           # add subtitles (published, else Whisper)
+subcast <url> --save           # download to ~/Videos/<source>/
+subcast --save --subs          # keep it with .srt and chapters
+subcast <url> --subs-from asr  # ignore published captions, transcribe
+subcast <url> --quality 720    # cap the video height
+subcast --whisper-model medium.en --whisper-device cpu
 ```
+
+With no URL, `subcast` plays the latest RTÉ Morning Ireland: audio in the
+terminal, captions transcribed locally, segment titles from RTÉ's clip
+list. A YouTube URL plays video in an mpv window by default, with the
+subtitles we produced — published captions where the video has them, which
+arrives in seconds, and Whisper otherwise.
 
 With `--subs`, captions are drawn by the tool itself in a fixed block at
 the bottom of the terminal: a dim cyan segment title, then the line that
@@ -116,16 +136,31 @@ width still follows the window there). `--subs-scale=3` goes bigger still,
 `PageUp`/`PageDown` skip between published segments; the bar shows which
 segment you land in.
 
+## Sources
+
+| Source | What it does |
+| --- | --- |
+| `rte` | Finds the latest Morning Ireland (or the episodes on a show page), reads the segment list RTÉ publishes, and drives the RTÉ player in a headless browser to find the stream mpv should play |
+| `youtube` | Lists videos, playlists and channels with `yt-dlp --flat-playlist`, reads chapters and caption tracks from the player JSON, and hands mpv the page URL with `--ytdl` to stream |
+
+A source hands the pipeline a `Media` record: what to play, which captions
+it publishes, and its segments (exact start times where the site has them,
+lengths where it does not). Everything after that is shared, which is why
+YouTube chapters and RTÉ clip lists need no separate code paths.
+
 ## How the subtitles work
 
-1. The episode audio is downloaded once and cached (a transcription run
-   needs the file anyway), then transcribed with faster-whisper in
-   English with voice-activity filtering.
-2. The episode page embeds the segment list RTÉ publishes (`var clips =
-   [...]`): titles and durations, **no offsets**.
-3. `segments.py` places those titles: clock-titled segments pin their
-   slot, the others are packed in published order, and then each title is
-   snapped onto the nearest transcript cue that mentions it (within 180s).
+1. Published captions are used when the source has them — YouTube's are
+   already timed, so nothing is generated. Where there are none (RTÉ), or
+   with `--subs-from asr`, the audio is downloaded once and transcribed
+   with faster-whisper in English with voice-activity filtering.
+2. Segments come from the source: YouTube chapters carry exact starts,
+   while RTÉ's clip list (`var clips = [...]`) publishes only titles and
+   durations, **no offsets**.
+3. `segments.py` places them: exact starts are taken as given; derived
+   ones (RTÉ) pin clock-titled segments to their slot, pack the rest in
+   published order, and snap each title onto the nearest transcript cue
+   that mentions it (within 180s).
 
    Caveat: the clip list is the *planned* running order. A bulletin
    scheduled for 8.35 can go out at 8.37, and an interview whose title
@@ -160,9 +195,9 @@ realtime, so ~9 minutes for a two-hour show) is the default;
 
 | Mode | Location |
 | --- | --- |
-| `--save` | `~/Videos/MorningIreland/<title>.mp3` |
+| `--save` | `~/Videos/<source>/<title>.mp3` (RTÉ) or `.mp4` (YouTube) |
 | `--save --subs` | the same stem plus `.srt`, `.cues.json`, `.segments.json`, `.chapters.txt` |
-| `--subs` cache | `$XDG_CACHE_HOME/subcast/<episode-uuid>.{mp3,cues.json,segments.json,srt,chapters.txt}` |
+| `--subs` cache | `$XDG_CACHE_HOME/subcast/<source>/<id>.{mp3,mp4,cues.json,segments.json,srt,chapters.txt}` |
 
 The cache is keyed by episode UUID. The transcript (`cues.json`) and the
 placed segment list (`segments.json`) are what get kept; the `.srt` and
@@ -187,30 +222,32 @@ sending a pull request.
 
 ## Roadmap
 
-0.1.0 is deliberately narrow: one show, one pipeline. What comes next, in
-order:
+Done in 0.2.0: the `sources` layer, YouTube (videos, playlists, channels),
+published captions preferred over transcription, chapters as segments,
+`--list`/`--limit`/`--save` for lists, and video playback in an mpv window.
 
-1. **A `sources` layer**: a small interface (`latest()`, `episodes()`) that
-   returns a `Media` record, with the current RTÉ code moved behind it
-   unchanged.
-2. **Local files and arbitrary URLs** as sources, with `ffprobe` for
-   duration and optional sidecar subtitles.
-3. **YouTube**, videos and playlists, through `yt-dlp` as an optional
-   extra — preferring the captions YouTube already has, falling back to
-   transcription, and using chapters as segments.
-4. **Playlist playback**: queue items through mpv's IPC interface, which the
-   caption bar already uses.
-5. **Video playback**: the terminal caption block only makes sense for
-   audio; with video, captions belong in mpv's window.
+Next:
+
+1. **Local files and arbitrary URLs** as sources, with `ffprobe` for
+   duration and sidecar subtitles picked up automatically.
+2. **RSS feeds** (the reference point is `podcast.sh`, which handles them
+   alongside YouTube) so a podcast feed can be played like a playlist.
+3. **Searching and browsing**: a picker for long listings, instead of
+   `--limit` and `--list`.
+4. **Per-source options** worth having: cookies for age-restricted videos,
+   a preferred caption language, audio-only formats for `--save`.
 
 Feature requests that map onto one of these are welcome; see the issue
 templates.
 
 ## Notes
 
-- **Not affiliated with RTÉ**, and not endorsed by them. Audio is fetched
-  from RTÉ's public podcast endpoints; respect their terms of use, and do
-  not hammer the service. This project ships no media and no scraped pages.
+- **Not affiliated with RTÉ or YouTube**, and not endorsed by either.
+  Audio and video are fetched from their public endpoints; respect their
+  terms of use (YouTube's in particular forbids downloading without
+  permission), and do not hammer the service. This project ships no media
+  and no scraped pages, bundles no downloader — `yt-dlp` is an optional
+  dependency you install and use on your own responsibility.
 - Whisper models are downloaded from Hugging Face on first use, and stay in
   your Hugging Face cache.
 - Licence: [MIT](LICENSE). Dependencies keep their own: faster-whisper is

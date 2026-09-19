@@ -28,6 +28,7 @@ def play_with_mpv(
     url: str,
     subtitle_path: Path | None = None,
     chapters_path: Path | None = None,
+    stream: bool = False,
 ) -> int:
 
     mpv = mpv_path()
@@ -54,6 +55,15 @@ def play_with_mpv(
         "--cache=yes",
     ]
 
+    if stream:
+
+        command.extend(
+            [
+                "--ytdl=yes",
+                "--ytdl-format=bestaudio/best",
+            ]
+        )
+
     if subtitle_path is not None:
 
         command.extend(
@@ -64,6 +74,75 @@ def play_with_mpv(
                 # status line quiet so it does not redraw them.
                 "--term-osd=force",
                 "--term-status-msg=",
+            ]
+        )
+
+    if chapters_path is not None:
+
+        command.append(
+            f"--chapters-file={chapters_path}"
+        )
+
+    command.append(
+        str(url)
+    )
+
+    return subprocess.run(
+        command,
+        check=False,
+    ).returncode
+
+
+def play_window(
+    url: str,
+    subtitle_path: Path | None = None,
+    chapters_path: Path | None = None,
+    quality: int = 1080,
+    stream: bool = False,
+) -> int:
+    """
+    Play video in an mpv window, with the subtitles we produced.
+
+    Terminal captions only make sense for audio: with video, mpv renders
+    them itself, over the picture, using the user's own mpv settings.
+    """
+
+    mpv = mpv_path()
+
+    print()
+    print(
+        "Starting mpv..."
+    )
+    print(
+        f"    {url}"
+    )
+
+    if subtitle_path is not None:
+        print(
+            f"    {subtitle_path}"
+        )
+
+    print()
+
+    command = [
+        mpv,
+        "--force-window=yes",
+        f"--ytdl-format=bestvideo[height<={quality}]+bestaudio/"
+        f"bestvideo[height<={quality}]+bestaudio/best",
+    ]
+
+    if stream:
+
+        command.append(
+            "--ytdl=yes"
+        )
+
+    if subtitle_path is not None:
+
+        command.extend(
+            [
+                f"--sub-file={subtitle_path}",
+                "--sid=1",
             ]
         )
 

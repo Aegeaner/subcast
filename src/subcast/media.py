@@ -307,3 +307,46 @@ def media_duration(
 
     except Exception:
         return 0.0
+
+
+def acquire(
+    media,
+    stem: Path,
+) -> Path:
+    """
+    Local audio for a media item, downloaded once and reused.
+
+    Sources that only expose a page (YouTube) go through their own
+    downloader; sources that hand out a direct stream are fetched
+    straight.
+    """
+
+    cached = find_cached_audio(
+        stem.parent,
+        stem.name,
+    )
+
+    if cached is not None:
+        return cached
+
+    if media.stream:
+
+        from .sources import youtube
+
+        return youtube.audio_download(
+            media.url,
+            stem,
+        )
+
+    return download_audio(
+        media.url,
+        stem,
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/139.0 Safari/537.36"
+            ),
+            **dict(media.headers),
+        },
+    )

@@ -5,11 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import requests
+
+from . import config
 from .chapters import write_chapters_file
 from .media import media_duration
 from .segments import (
-    build_segments,
     load_segments,
+    place,
     save_segments,
     snap_segments,
 )
@@ -169,55 +172,184 @@ def transcribe(
     return cues
 
 
-def prepare_subtitles(
-    audio_path: Path,
-    clips: list[tuple[str, float]],
-    title: str,
+def _download_caption_text(
+    url: str,
+    session: requests.Session,
+) -> str:
+
+    response = session.get(
+        url,
+        timeout=30,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/139.0 Safari/537.36"
+            ),
+        },
+    )
+
+    response.raise_for_status()
+
+    return response.text
+
+
+def cache_stem(
+    media,
+) -> Path:
+    """
+    Where an item's cached transcript, segments and subtitles live.
+    """
+
+    return config.cache_dir(
+        media.source
+    ) / media.key
+
+
+def has_transcript(
+    media,
+) -> bool:
+    """
+    Whether the transcript and the placed segments are already cached.
+    """
+
+    stem = cache_stem(media)
+
+    return stem.with_suffix(
+        ".cues.json"
+    ).is_file() and (
+        not media.segments
+        or stem.with_suffix(
+            ".segments.json"
+        ).is_file()
+    )
+
+
+def fetch_captions(
+    captions,
+    media=None,
+    stem: Path | None = None,
+    session: requests.Session | None = None,
+) -> list[tuple[float, float, str]]:
+    """
+    Get a subtitle track the source already publishes, as cues.
+
+    The URL in a player's metadata is sometimes the WebVTT itself and
+    sometimes a playlist pointing at it; when the plain download does not
+    yield captions, the source gets a chance to fetch them its own way
+    (yt-dlp, for YouTube).
+    """
+
+    from . import sources
+    from .vtt import parse_vtt
+
+    session = session or requests.Session()
+
+    cues: list[tuple[float, float, str]] = []
+
+    try:
+
+        text = _download_caption_text(
+            captions.url,
+            session,
+        )
+
+    except requests.RequestException:
+        text = ""
+
+    if text.lstrip().startswith("WEBVTT"):
+
+        cues = parse_vtt(text)
+
+    if not cues and media is not None and stem is not None:
+
+        source = sources.by_name(media.source)
+
+        fetcher = getattr(
+            source,
+            "caption_file",
+            None,
+        )
+
+        if fetcher is not None:
+
+            print(
+                "    Fetching captions with yt-dlp...",
+                flush=True,
+            )
+
+            path = fetcher(
+                media.url,
+                captions.language,
+                stem,
+            )
+
+            if path is not None:
+
+                cues = parse_vtt(
+                    path.read_text(
+                        encoding="utf-8",
+                        errors="replace",
+                    )
+                )
+
+    if not cues:
+
+        raise RuntimeError(
+            "the published captions were empty"
+        )
+
+    print(
+        f"    Published captions ({captions.language}): "
+        f"{len(cues)} cues",
+        flush=True,
+    )
+
+    return cues
+
+
+def prepare(
+    media,
+    audio_path: Path | None,
     model_name: str,
     device: str,
+    subs_from: str = "auto",
 ) -> Prepared:
     """
-    Subtitles and chapters for audio_path, transcribed once and reused.
+    Subtitles and chapters for one media item, prepared once and reused.
 
-    The transcript and the placed segment list are what get cached; the
-    .srt and the chapters file are rendered from them on every run, so
-    changing how captions look never costs a re-transcription. Both are
-    rendered from the same placed segments, so the chapter marks and the
-    segment cues cannot drift apart.
-
-    The rendered captions and segments come back with the artifacts, for
-    callers that draw the captions themselves.
+    Published captions win when the source has them - they are already
+    timed, and cost nothing but a download. Otherwise the audio is
+    transcribed locally. The transcript and the placed segments are what
+    get cached, so re-rendering never costs a transcription.
     """
 
-    srt_path = audio_path.with_suffix(
-        ".srt"
+    stem = cache_stem(media)
+
+    stem.parent.mkdir(
+        parents=True,
+        exist_ok=True,
     )
 
-    cues_path = audio_path.with_name(
-        audio_path.stem + ".cues.json"
+    srt_path = stem.with_suffix(".srt")
+    cues_path = stem.with_suffix(".cues.json")
+
+    segments_path = stem.with_suffix(
+        ".segments.json"
     )
 
-    segments_path = audio_path.with_name(
-        audio_path.stem + ".segments.json"
+    chapters_path = stem.with_suffix(
+        ".chapters.txt"
     )
 
-    chapters_path = audio_path.with_name(
-        audio_path.stem + ".chapters.txt"
-    )
-
-    if cues_path.is_file() and (
-        not clips
-        or segments_path.is_file()
-    ):
+    if has_transcript(media):
 
         print(
             f"    Reusing transcript: {cues_path}",
             flush=True,
         )
 
-        cues = load_cues(
-            cues_path
-        )
+        cues = load_cues(cues_path)
 
         segments = load_segments(
             segments_path
@@ -225,36 +357,62 @@ def prepare_subtitles(
 
     else:
 
-        cues = transcribe(
-            audio_path,
-            model_name,
-            device,
-        )
+        published = list(media.captions)
+
+        if (
+            subs_from in ("auto", "published")
+            and published
+        ):
+
+            cues = fetch_captions(
+                published[0],
+                media,
+                stem,
+            )
+
+        else:
+
+            if audio_path is None:
+
+                raise RuntimeError(
+                    "this item has no published captions and "
+                    "no audio was fetched to transcribe"
+                )
+
+            cues = transcribe(
+                audio_path,
+                model_name,
+                device,
+            )
 
         save_cues(
             cues,
             cues_path,
         )
 
-        duration = media_duration(
-            audio_path
-        )
+        duration = media.duration or 0.0
+
+        if not duration and audio_path is not None:
+            duration = media_duration(audio_path)
 
         if not duration:
 
-            # No ffprobe: the published clip durations are a lower bound.
             duration = sum(
-                clip_duration
-                for _, clip_duration in clips
+                segment.duration or 0.0
+                for segment in media.segments
             )
 
-        segments = snap_segments(
-            build_segments(
-                clips,
-                duration,
-            ),
-            cues,
+        segments, exact = place(
+            list(media.segments),
+            duration,
         )
+
+        if not exact:
+
+            segments = snap_segments(
+                segments,
+                cues,
+            )
 
         save_segments(
             segments,
@@ -289,7 +447,7 @@ def prepare_subtitles(
 
     write_chapters_file(
         segments,
-        title,
+        media.title,
         chapters_path,
     )
 
@@ -299,4 +457,3 @@ def prepare_subtitles(
         framed,
         segments,
     )
-
