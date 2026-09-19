@@ -18,12 +18,23 @@ System packages: `mpv` for playback, `ffmpeg`/`ffprobe` for duration probing.
 ## Checks before a pull request
 
 ```
-ruff check src tests
+uvx ruff==0.16.8 check src tests
 pytest
 ```
 
-Both must pass. The test suite is offline and must stay that way: no network
-access, no sleeping, no dependence on a show being published today.
+Both must pass. The lint command is pinned on purpose: ruff adds rules to its
+default set between releases, so the `ruff` on `PATH` can pass while CI fails.
+The test suite is offline and must stay that way: no network access, no
+sleeping, and no dependence on a show being published today.
+
+## Where documentation goes
+
+Documentation follows the four types it is written in: the README
+installs and orients, `docs/how-to.md` holds task recipes,
+`docs/reference.md` holds options, paths and statuses, and
+`docs/explanation.md` holds the design and its reasons. Put a change in the
+page whose type it belongs to, and keep each page to its own type: a recipe
+does not explain, and a reference entry does not instruct.
 
 ## What a good change looks like
 
