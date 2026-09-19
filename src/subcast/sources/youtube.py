@@ -99,6 +99,70 @@ class Youtube:
             yt_dlp_json(media.url)
         )
 
+    def caption_file(
+        self,
+        url: str,
+        language: str,
+        dest_stem: Path,
+    ) -> Path | None:
+        """
+        Save a published caption track next to the episode, through
+        yt-dlp.
+
+        The URLs in the player JSON are often HLS playlists rather than
+        WebVTT, so the download is left to yt-dlp, which knows how to get
+        the text out. Returns the file it wrote, or None when the video
+        has no captions in that language.
+        """
+
+        if not yt_dlp_available():
+
+            raise RuntimeError(MISSING_MESSAGE)
+
+        dest_stem.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        completed = _run(
+            [
+                "yt-dlp",
+                "--skip-download",
+                "--write-subs",
+                "--write-auto-subs",
+                "--sub-langs",
+                language,
+                "--sub-format",
+                "vtt",
+                "-o",
+                f"{dest_stem}.%(ext)s",
+                "--no-playlist",
+                url,
+            ]
+        )
+
+        written = sorted(
+            dest_stem.parent.glob(
+                f"{dest_stem.name}*.vtt"
+            )
+        )
+
+        if written:
+
+            return written[0]
+
+        # Nothing written is either "this video has no track in that
+        # language" - the caller has its own message for that - or
+        # yt-dlp failing, which it should say out loud.
+        if completed.returncode != 0:
+
+            raise RuntimeError(
+                f"yt-dlp could not fetch the captions for {url}: "
+                f"{_stderr_tail(completed)}"
+            )
+
+        return None
+
 
 SOURCE = Youtube()
 
@@ -538,55 +602,6 @@ def audio_download(
         )
 
     return written[0]
-
-
-def caption_file(
-    url: str,
-    language: str,
-    dest_stem: Path,
-) -> Path | None:
-    """
-    Save a published caption track next to the episode, through yt-dlp.
-
-    The URLs in the player JSON are often HLS playlists rather than
-    WebVTT, so the download is left to yt-dlp, which knows how to get the
-    text out. Returns the file it wrote, or None when the video has no
-    captions in that language.
-    """
-
-    if not yt_dlp_available():
-
-        raise RuntimeError(MISSING_MESSAGE)
-
-    dest_stem.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    _run(
-        [
-            "yt-dlp",
-            "--skip-download",
-            "--write-subs",
-            "--write-auto-subs",
-            "--sub-langs",
-            language,
-            "--sub-format",
-            "vtt",
-            "-o",
-            f"{dest_stem}.%(ext)s",
-            "--no-playlist",
-            url,
-        ]
-    )
-
-    written = sorted(
-        dest_stem.parent.glob(
-            f"{dest_stem.name}*.vtt"
-        )
-    )
-
-    return written[0] if written else None
 
 
 def media_download(

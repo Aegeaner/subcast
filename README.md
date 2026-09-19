@@ -14,9 +14,10 @@ subcast "https://www.youtube.com/@channel/videos" --limit 5
 subcast <url> --list                     # what does this URL point at?
 ```
 
-Sources today: **RTÉ Morning Ireland** (audio, transcribed locally, segment
-titles from the clip list RTÉ publishes) and **YouTube** (videos, playlists
-and channels, using the captions and chapters YouTube already has). The
+Sources today: **RTÉ Morning Ireland** (audio, segment titles from the clip
+list RTÉ publishes, transcribed locally with `--subs`) and **YouTube**
+(videos, playlists and channels, using the captions and chapters YouTube
+already has). The
 pipeline underneath — media → transcript → segments → artifacts → player —
 is source-agnostic; local files, arbitrary URLs and RSS feeds are next (see
 [Roadmap](#roadmap)).
@@ -99,21 +100,24 @@ subcast <url>                  # play it: video in an mpv window
 subcast <url> --list           # list a playlist, channel or show listing
 subcast <url> --limit 5        # play five entries in turn (0 = all)
 subcast <url> --audio-only     # audio plus terminal captions, no video
-subcast <url> --subs           # add subtitles (published, else Whisper)
+subcast <url> --subs           # transcribe too, where the source has none
 subcast <url> --save           # download to ~/Videos/<source>/
-subcast --save --subs          # keep it with .srt and chapters
+subcast --save --subs          # keep a transcript with it
 subcast <url> --subs-from asr  # ignore published captions, transcribe
 subcast <url> --quality 720    # cap the video height
 subcast --whisper-model medium.en --whisper-device cpu
 ```
 
-With no URL, `subcast` plays the latest RTÉ Morning Ireland: audio in the
-terminal, captions transcribed locally, segment titles from RTÉ's clip
-list. A YouTube URL plays video in an mpv window by default, with the
-subtitles we produced — published captions where the video has them, which
-arrives in seconds, and Whisper otherwise.
+Captions a source already publishes come with it, no flag needed: a
+YouTube video arrives with the captions it has (seconds, no GPU), and a
+video whose captions are only automatic (ASR) gets those. Whisper is what
+`--subs` is for, and it is what the sources without captions need: with no
+URL, `subcast --subs` plays the latest RTÉ Morning Ireland as audio in the
+terminal with captions transcribed locally and segment titles from RTÉ's
+clip list, while plain `subcast` plays the same audio with the segment
+titles alone.
 
-With `--subs`, captions are drawn by the tool itself in a fixed block at
+For audio, captions are drawn by the tool itself in a fixed block at
 the bottom of the terminal: a dim cyan segment title, then the line that
 has just finished (dimmed, so you never lose the thread mid-sentence),
 under it up to two lines of bright dialogue, and — on the bottom row — the
@@ -154,10 +158,11 @@ YouTube chapters and RTÉ clip lists need no separate code paths.
 
 ## How the subtitles work
 
-1. Published captions are used when the source has them — YouTube's are
-   already timed, so nothing is generated. Where there are none (RTÉ), or
-   with `--subs-from asr`, the audio is downloaded once and transcribed
-   with faster-whisper in English with voice-activity filtering.
+1. Published captions are used when the source has them, with no flag
+   involved — YouTube's are already timed, so nothing is generated and the
+   GPU stays idle. Where there are none (RTÉ), or with `--subs-from asr`,
+   the audio is downloaded once and transcribed with faster-whisper in
+   English with voice-activity filtering; `--subs` is what asks for that.
 2. Segments come from the source: YouTube chapters carry exact starts,
    while RTÉ's clip list (`var clips = [...]`) publishes only titles and
    durations, **no offsets**.
@@ -200,8 +205,8 @@ realtime, so ~9 minutes for a two-hour show) is the default;
 | Mode | Location |
 | --- | --- |
 | `--save` | `~/Videos/<source>/<title>.mp3` (RTÉ) or `.mp4` (YouTube) |
-| `--save --subs` | the same stem plus `.srt`, `.cues.json`, `.segments.json`, `.chapters.txt` |
-| `--subs` cache | `$XDG_CACHE_HOME/subcast/<source>/<id>.{mp3,mp4,cues.json,segments.json,srt,chapters.txt}` |
+| Subtitles | `$XDG_CACHE_HOME/subcast/<source>/<id>.{srt,chapters.txt}` |
+| Cache | `$XDG_CACHE_HOME/subcast/<source>/<id>.{mp3,mp4,cues.json,segments.json}` |
 
 The cache is keyed by episode UUID. The transcript (`cues.json`) and the
 placed segment list (`segments.json`) are what get kept; the `.srt` and

@@ -91,7 +91,8 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help=(
             "Download into ~/Videos/<source>/ instead of streaming, "
-            "then stop (add --subs to keep subtitles alongside)."
+            "then stop (published captions and chapters are kept in the "
+            "cache; --subs transcribes where the source has none)."
         ),
     )
 
@@ -130,8 +131,10 @@ def parse_args() -> argparse.Namespace:
         dest="subs",
         action="store_true",
         help=(
-            "Produce subtitles: published captions where the source has "
-            "them, otherwise a local Whisper transcription."
+            "Produce subtitles where the source publishes none, by "
+            "transcribing the audio locally. Captions the source already "
+            "has are used either way, so this is only needed for items "
+            "without published captions."
         ),
     )
 
@@ -300,6 +303,26 @@ def save_media(
     )
 
 
+def wants_subtitles(
+    media: Media,
+    args: argparse.Namespace,
+) -> bool:
+    """
+    Whether an item gets subtitles.
+
+    Always when asked, and whenever the source already publishes them -
+    those cost a download where transcribing costs minutes of GPU. Asking
+    for local transcription (`--subs-from asr`) is asking for subtitles
+    too.
+    """
+
+    return bool(
+        args.subs
+        or media.captions
+        or args.subs_from == "asr"
+    )
+
+
 def prepare_item(
     media: Media,
     args: argparse.Namespace,
@@ -310,7 +333,7 @@ def prepare_item(
     locally.
     """
 
-    if not args.subs:
+    if not wants_subtitles(media, args):
         return None
 
     audio_path = saved_path

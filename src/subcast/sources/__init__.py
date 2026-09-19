@@ -68,6 +68,11 @@ class Media:
 class Source(Protocol):
     """
     A place episodes come from.
+
+    A source may also offer `caption_file(url, language, stem)`, which the
+    subtitle pipeline calls when the caption URL it was handed does not
+    itself yield WebVTT: sources whose captions come as playlists need it
+    to get the text out their own way (yt-dlp, for YouTube).
     """
 
     name: str

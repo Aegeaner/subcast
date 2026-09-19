@@ -617,3 +617,77 @@ def test_downloading_audio_without_yt_dlp_says_how_to_install_it(
         )
 
     assert "pipx install yt-dlp" in str(error.value)
+
+
+def test_downloading_captions_returns_the_vtt_yt_dlp_wrote(
+    monkeypatch,
+    tmp_path: Path,
+):
+    stem = tmp_path / "abc123"
+
+    def write(command):
+        (tmp_path / "abc123.en.vtt").write_text("WEBVTT\n")
+
+    commands = fake_yt_dlp(
+        monkeypatch,
+        side_effect=write,
+    )
+
+    assert SOURCE.caption_file(
+        f"{WATCH}abc123",
+        "en",
+        stem,
+    ) == tmp_path / "abc123.en.vtt"
+
+    assert commands == [
+        [
+            "yt-dlp",
+            "--skip-download",
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs",
+            "en",
+            "--sub-format",
+            "vtt",
+            "-o",
+            f"{stem}.%(ext)s",
+            "--no-playlist",
+            f"{WATCH}abc123",
+        ]
+    ]
+
+
+def test_a_video_without_that_caption_language_returns_nothing(
+    monkeypatch,
+    tmp_path: Path,
+):
+    fake_yt_dlp(monkeypatch)
+
+    assert (
+        SOURCE.caption_file(
+            f"{WATCH}abc123",
+            "en",
+            tmp_path / "abc123",
+        )
+        is None
+    )
+
+
+def test_a_caption_download_that_fails_reports_what_yt_dlp_said(
+    monkeypatch,
+    tmp_path: Path,
+):
+    fake_yt_dlp(
+        monkeypatch,
+        stderr="ERROR: Unable to download video subtitles\n",
+        returncode=1,
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        SOURCE.caption_file(
+            f"{WATCH}abc123",
+            "en",
+            tmp_path / "abc123",
+        )
+
+    assert "Unable to download video subtitles" in str(error.value)

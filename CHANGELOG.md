@@ -16,6 +16,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   usually does), they are downloaded and used instead of transcribing, so an
   episode is ready in seconds with no GPU. `--subs-from asr` forces local
   transcription, `--subs-from published` forbids it.
+- Published captions now arrive on their own: an item whose source times
+  its own captions is prepared and played with them without `--subs` (ASR
+  tracks included), and `--subs` is left for the local transcription that
+  sources without captions - RTÉ - need.
 - **YouTube chapters** become the segments, used exactly as published, so
   nothing is guessed: the block shows the chapter you are in.
 - A `sources` layer: sources hand the pipeline a `Media` record (what to
@@ -36,7 +40,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and saved episodes under `~/Videos/<source>/`, so paths no longer assume
   one show. Existing caches keep working if moved into those directories.
 - The CLI takes an optional URL instead of only talking to RTÉ; with no URL
-  it still plays the latest Morning Ireland.
+  it still plays the latest Morning Ireland. `--subs` now means "transcribe
+  where the source has none" rather than "produce subtitles at all".
+
+### Fixed
+
+- YouTube captions that do not arrive as WebVTT: the hand-off to yt-dlp was
+  looked up as a method on the source while it only existed as a module
+  function, so it never ran. The URL YouTube hands over for automatic
+  captions answers with json3 or a playlist rather than WebVTT, so those
+  videos failed with "the published captions were empty". The source now
+  carries the hook, and a yt-dlp failure reports what yt-dlp said.
 
 ## [0.1.0] - 2026-09-19
 
