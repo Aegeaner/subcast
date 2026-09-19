@@ -94,8 +94,9 @@ subcast --whisper-model medium.en
 ```
 
 With `--subs`, captions are drawn by the tool itself in a fixed block at
-the bottom of the terminal: a dim cyan segment title with up to two lines
-of bright dialogue under it. The block spans the window — resize or
+the bottom of the terminal: a dim cyan segment title, then the line that
+has just finished (dimmed, so you never lose the thread mid-sentence), and
+under it up to two lines of bright dialogue. The block spans the window — resize or
 maximise the terminal and the captions re-wrap to the new width, moving
 with the bottom edge — and it only repaints when the text actually changes,
 so nothing flickers or jumps. The block is cleared again on exit

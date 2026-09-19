@@ -14,35 +14,39 @@ def test_frame_shows_the_segment_title_above_the_dialogue():
         (12.0, 20.0, "8am News Bulletin"),
     ]
 
-    title, captions = captionbar.frame(cues, segments, 11.0, width=30)
+    title, history, current = captionbar.frame(
+        cues, segments, 11.0, width=30
+    )
 
     assert title == "Weather Forecast"
-    assert captions == [
+    assert history == []
+    assert current == [
         "Good morning and welcome to",
         "the programme.",
     ]
 
 
 def test_frame_is_empty_while_nothing_is_playing():
-    assert captionbar.frame([], [], 5.0, width=42) == ("", [])
+    assert captionbar.frame([], [], 5.0, width=42) == ("", [], [])
 
 
 def test_frame_caps_the_dialogue_at_two_lines():
     rambling = " ".join(["word"] * 40)
 
-    _, captions = captionbar.frame(
+    _, _, current = captionbar.frame(
         [(0.0, 9.0, rambling)],
         [],
         1.0,
         width=42,
     )
 
-    assert len(captions) == captionbar.CAPTION_LINES
+    assert len(current) == captionbar.CURRENT_LINES
 
 
 def test_draw_paints_the_bottom_rows_without_scrolling():
     screen = captionbar.draw(
         "8am News Bulletin",
+        [],
         ["Good morning again, this is Morning Ireland"],
         rows=30,
         columns=100,
@@ -65,6 +69,7 @@ def test_draw_marks_muted_playback():
     screen = captionbar.draw(
         "8am News Bulletin",
         [],
+        [],
         rows=30,
         columns=100,
         muted=True,
@@ -77,6 +82,7 @@ def test_draw_keeps_lines_inside_the_terminal():
     screen = captionbar.draw(
         "t" * 120,
         [],
+        [],
         rows=30,
         columns=40,
     )
@@ -88,6 +94,7 @@ def test_draw_keeps_lines_inside_the_terminal():
 def test_scaled_lines_are_sent_through_the_sizing_protocol():
     screen = captionbar.draw(
         "8am News Bulletin",
+        [],
         ["Good morning again"],
         rows=30,
         columns=100,
@@ -102,6 +109,7 @@ def test_scaled_lines_are_sent_through_the_sizing_protocol():
 def test_scaled_lines_occupy_and_clear_both_of_their_rows():
     screen = captionbar.draw(
         "Title",
+        [],
         ["caption"],
         rows=30,
         columns=100,
@@ -123,6 +131,7 @@ def test_scaled_lines_hold_half_as_many_characters():
     screen = captionbar.draw(
         "t" * 100,
         [],
+        [],
         rows=30,
         columns=80,
         scale=2,
@@ -133,9 +142,13 @@ def test_scaled_lines_hold_half_as_many_characters():
 
 
 def test_scale_is_capped_by_the_space_available():
-    # three block rows need three rows on screen
-    assert captionbar.effective_scale(3, rows=6, columns=200) == 2
-    assert captionbar.effective_scale(3, rows=3, columns=200) == 1
+    # the block needs BLOCK_ROWS rows for every step up in size
+    assert captionbar.effective_scale(
+        3, rows=captionbar.BLOCK_ROWS * 2, columns=200
+    ) == 2
+    assert captionbar.effective_scale(
+        3, rows=captionbar.BLOCK_ROWS, columns=200
+    ) == 1
     # and a line still has to be worth reading
     assert captionbar.effective_scale(3, rows=40, columns=40) == 2
     assert captionbar.effective_scale(3, rows=40, columns=20) == 1
@@ -221,3 +234,58 @@ def test_resizing_erases_the_previous_block():
 
     for offset in range(captionbar.BLOCK_ROWS * 3):
         assert f"\x1b[{first_scaled_row + offset};1H\x1b[2K" in scaled
+
+
+def test_the_previous_line_lingers_until_the_next_one_replaces_it():
+    cues = [
+        (0.0, 2.0, "Good morning and welcome to the programme."),
+        (2.0, 5.0, "More news after this."),
+    ]
+    segments: list[tuple[float, float, str]] = []
+
+    _, history, current = captionbar.frame(cues, segments, 3.0, width=42)
+
+    assert history == ["Good morning and welcome to the programme."]
+    assert current == ["More news after this."]
+
+
+def test_a_long_current_line_keeps_only_the_tail_of_the_previous_one():
+    cues = [
+        (0.0, 2.0, "The Taoiseach is in Manchester this morning."),
+        (2.0, 6.0, "And the rest of the front pages are about the budget."),
+    ]
+
+    _, history, current = captionbar.frame(cues, [], 3.0, width=30)
+
+    assert len(current) == captionbar.CURRENT_LINES
+    assert len(history) == captionbar.CAPTION_LINES - len(current)
+    assert history == ["this morning."]
+
+
+def test_the_block_is_the_same_height_whatever_is_showing():
+    cues = [
+        (0.0, 2.0, "Short."),
+        (2.0, 6.0, "A much longer line of dialogue that has to wrap twice over."),
+    ]
+
+    for position in (1.0, 3.0):
+        _, history, current = captionbar.frame(cues, [], position, width=28)
+        assert len(history) + len(current) <= captionbar.CAPTION_LINES
+
+
+def test_history_is_drawn_dimmer_than_what_is_being_said():
+    screen = captionbar.draw(
+        "8am News Bulletin",
+        ["the previous line"],
+        ["the current line"],
+        rows=30,
+        columns=100,
+    )
+
+    assert (
+        f"{captionbar.HISTORY_COLOUR}the previous line"
+    ) in screen
+
+    assert (
+        f"{captionbar.CAPTION_COLOUR}the current line"
+    ) in screen
