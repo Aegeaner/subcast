@@ -8,6 +8,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **BBC Audio, Bloomberg podcasts and podcast feeds.** Three more sources, each
+  reading what the publisher already states about an item rather than scraping a
+  player.
+
+  A podcast feed is a listing and an episode list in one document, so
+  `subcast <feed url>` plays the newest item of any RSS feed whose items enclose
+  audio - the enclosure is the audio and `itunes:duration` its length. A feed can
+  be saved as a feed by name like any other listing.
+
+  Bloomberg's own series pages are served by a bot filter that answers 403 to
+  anything that is not a browser - measured with a browser user agent and with a
+  browser's whole header set - so a series URL is read where Bloomberg publishes
+  the show. Its host's show page names the programme and links the feed the show
+  is syndicated as, and the slug is the same on both (`/podcasts/series/<name>`
+  and `omny.fm/shows/<name>`). The feed takes a page size, so a run that plays
+  one episode asks for one episode rather than downloading a thousand.
+
+  BBC Audio reads the payload every page of the audio site is rendered from, so a
+  programme, a series, a category or one episode costs one request for the whole
+  listing. A category is a directory of programmes, and an item that is a
+  programme plays its newest episode; a programme page carries ten episodes at a
+  time and a deeper listing asks for the pages it needs. The version the audio is
+  addressed by is not in the listing, so it comes from the programme's own JSON
+  when an item is played - a few kilobytes - and the audio is the mp3 BBC
+  syndicates to podcast clients.
+
+  All three work with `--list`, `--pick`, `--limit`, `--save`, `--audio-only`,
+  `--subs` and resume, and any of them can be saved as a feed by name.
+
 - **Any RTÉ Radio 1 programme**, not only Morning Ireland: a programme page
   is a listing URL the way a YouTube channel is, so
   `subcast https://www.rte.ie/radio/radio1/this-week/` plays its newest
@@ -97,7 +126,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   transcribing anything again. The subtitle, segments and chapters files are
   rendered from the transcript, which is the only thing the cache has to keep.
 
+- **Captions are made while the item plays, and written as they are heard.** A
+  run of a source whose stream comes out of a resolve used to resolve, fetch the
+  audio, transcribe it and only then start: a five-minute bulletin meant waiting
+  for a download and a transcription before the first word, and for the whole
+  transcription before the first caption. What has to be in hand before playback
+  is the audio, because that is the copy the captions belong to
+  (`cli.captions_audio`); after that the run plays, and the cues are written as
+  the model produces them, so mpv reads the subtitle file again each time it
+  grows and the captions keep ahead of the picture - a file is heard far faster
+  than it plays (`subtitles.HeardWhilePlaying`).
+
+  A broadcast is the same mechanism with the audio arriving in real time, so
+  both now present one interface (`subtitles.GrowingCaptions`) that the player
+  and the caption bar drive without caring which they have. Only a transcript
+  heard to the end is cached: a run that ends first keeps the captions it heard
+  and says what it got, and the next run hears the file rather than playing
+  against half an episode. Nothing is per-source: the resolve, the audio and the
+  player are the same three steps for every one of them.
+
 ### Fixed
+
+- A published transcript is not captions. Omny's enclosure for one Bloomberg
+  episode is served with ads stitched round the content - the first fetch of a
+  session carried a pre-roll the next three did not, and the served file ran
+  6:42 where the publisher states 5:30 - while the `podcast:transcript` track is
+  timed against the publisher's own file: its last line landed at 343.6s in the
+  audio and 321.8s in the track. Showing it put the captions a sentence ahead of
+  the words, so the track is no longer read and a podcast's captions are heard
+  from the audio the run plays, which is in pace with it by construction.
+
+- A listing cache dropped what an entry carried beyond its name: `Media.kind`
+  and the caption tracks went missing on the way through
+  `<source>/listings/<hash>.json`, so an audio item read back from the menu's
+  copy came back as a video with nothing published. A source whose listing says
+  everything - a podcast feed, which states the audio and the transcript beside
+  it - had nothing left to re-derive either one from, so the cache now
+  round-trips both. An entry written by an older run still reads, as a video
+  with no captions, which is what it was.
+
+- A subtitle file offered to mpv while it was still starting was refused
+  (`error running command`) and never offered again, which lost the captions
+  for the whole run. mpv opens its IPC socket before its core will take a
+  command - of 30 commands sent the moment the socket appeared, 17 were refused
+  and the same command a moment later always worked - and a run whose captions
+  were ready before playback began asked on its first poll, inside that window.
+  The file is offered again a couple of times now (`player.ATTACH_TRIES`).
 
 - A quoted word in a clip title kept its apostrophes as a keyword, so
   "'Appalling' - Clare protestors say Trump not welcome" could never match "It

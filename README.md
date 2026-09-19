@@ -8,10 +8,16 @@ Subcast uses the captions a site already publishes. When a site publishes none,
 it transcribes the audio on your own machine with Whisper. A segment title sits
 above the captions, and you can jump between segments while you watch.
 
-Two sources are supported:
+Sources:
 
 - **YouTube** — videos, playlists, channels and live broadcasts. Subcast uses
   YouTube's own captions and chapters.
+- **BBC Audio** — a programme, a series, or a category of programmes. Subcast
+  reads what the page carries, and plays the version BBC syndicates.
+- **Bloomberg podcasts** — a series page, read through the feed the show is
+  published as.
+- **Podcast feeds** — any RSS feed whose items enclose audio, played from that
+  audio.
 - **RTÉ Radio 1** — any programme page. Subcast reads the segment list RTÉ
   publishes, and transcribes the audio where the programme has no captions.
 
@@ -94,8 +100,11 @@ Good morning again, this is Morning Ireland with Gavin Jennings
 and Sarah McInerney. We're here with you until nine...
 ```
 
-The first run downloads a Whisper model (about 480 MB) and takes minutes to
-transcribe a two-hour episode. Later runs reuse the transcript.
+The audio is fetched first, because that is the copy the captions belong to,
+and then playback starts: the captions arrive while it plays, written as the
+model hears them, and mpv reads the file again each time it grows. Nothing waits
+for the whole transcription. The transcript is cached when it is complete, so
+later runs reuse it.
 
 **Play another RTÉ Radio 1 programme.** A programme page is a listing, so you
 can pass it the way you pass a channel URL:
@@ -106,6 +115,17 @@ subcast https://www.rte.ie/radio/radio1/this-week/
 
 `--pick` chooses from the episodes the page lists, and `--add-feed` saves the
 programme under its own name.
+
+**Play a podcast.** Pass a feed, a Bloomberg series page, or a BBC Audio page:
+
+```bash
+subcast https://www.bloomberg.com/podcasts/series/bloomberg-news-now
+subcast https://www.bbc.com/audio/brand/p002vsmz --subs
+```
+
+A feed states the audio and its length, so a podcast plays from the file its
+publisher serves. Its captions are heard from that audio, the way they are for
+an RTÉ programme.
 
 **Choose from a long listing.** A channel or playlist holds more than one item,
 so ask for the listing and pick from it:
@@ -138,5 +158,6 @@ Subcast prints the path it wrote, under `~/Videos/<source>/`.
 Captions are generated on your machine. Nothing is uploaded and no analytics
 are collected.
 
-Subcast is not affiliated with RTÉ or YouTube and is not endorsed by either.
-Licence: [MIT](https://github.com/Aegeaner/subcast/blob/main/LICENSE).
+Subcast is not affiliated with RTÉ, YouTube, the BBC or Bloomberg, and is not
+endorsed by any of them. Licence:
+[MIT](https://github.com/Aegeaner/subcast/blob/main/LICENSE).

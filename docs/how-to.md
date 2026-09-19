@@ -37,6 +37,28 @@ A programme names itself, so you only need `--name` to call it something else.
 Every option works the same way on any programme: `--subs`, `--save`,
 `--audio-only`, `--limit` and resume.
 
+## Play a podcast or a BBC programme
+
+Subcast reads the pages and feeds that list audio: any BBC Audio page, a
+Bloomberg podcast series, and any podcast feed.
+
+```bash
+subcast https://www.bbc.com/audio/brand/p002vsmz
+subcast https://www.bbc.com/audio/category/news --pick
+subcast https://www.bloomberg.com/podcasts/series/bloomberg-news-now
+subcast https://podcasts.files.bbci.co.uk/p02nq0gn.rss
+```
+
+A BBC programme page lists its episodes and a category page lists the programmes
+it covers, so `--pick` chooses from either; choosing a programme plays its newest
+episode. A feed states the audio its items enclose, so a podcast plays from the
+file its publisher serves. Save one to come back to by name:
+
+```bash
+subcast https://www.bbc.com/audio/brand/p02nq0gn --add-feed
+subcast --feed "Global News Podcast"
+```
+
 ## Play audio only
 
 To skip the video window and read the captions in your terminal, add
@@ -128,6 +150,17 @@ local transcription:
 ```bash
 subcast <url> --subs
 ```
+
+The audio is what the captions are timed against, so it is fetched first - for a
+source whose stream URL comes out of a resolve, that is the wait before the
+first frame. The captions are then written as the model hears them and appear
+while the item plays: a file is heard faster than it plays, so they keep ahead
+of the picture rather than trailing it.
+
+The transcript is cached once the whole file has been heard, so the next run
+reuses it. Ending the item first leaves the captions it heard and caches
+nothing, and subcast says so: the next run hears the file again rather than
+play against half a transcript.
 
 Two options override that choice. `--subs-from asr` ignores published captions,
 and `--subs-from published` refuses transcription. To trade accuracy for speed,

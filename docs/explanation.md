@@ -16,10 +16,15 @@ site publishes, and what the item's segments are. Everything after that is
 shared, so YouTube chapters and RTÉ clip lists need no separate code paths, and
 adding a source does not touch the segments, the artifacts or the player.
 
-A YouTube channel and an RTÉ programme are both listing URLs. Point subcast at
-either and it plays the newest item, lists the rest, and can save the listing as
-a feed. A programme's name and schedule come from its own page, so the same code
-covers a show that has been on air for decades and one that started last week.
+A YouTube channel, a BBC programme page and an RTÉ programme are all listing
+URLs. Point subcast at one and it plays the newest item, lists the rest, and can
+save the listing as a feed. A programme's name and schedule come from its own
+page, so the same code covers a show that has been on air for decades and one
+that started last week.
+
+A podcast feed is a listing and an episode list in one document, which is why it
+needs no separate resolve: every item states the audio it plays and how long it
+runs.
 
 Three capabilities are looked up on the source object itself, with
 `getattr(source, "caption_file", None)`, `getattr(source, "video_id", None)` and
@@ -29,7 +34,7 @@ who resolves the stream URL.
 
 ## Who resolves the stream
 
-The two sources differ in one way, and most other differences follow from it.
+Sources differ in one way, and most other differences follow from it.
 
 - **YouTube is a page.** mpv can be handed the page URL and run yt-dlp itself,
   so subcast skips its own resolve and starts playback before it finishes. When
@@ -41,12 +46,40 @@ The two sources differ in one way, and most other differences follow from it.
   episode is therefore played from that file, the only audio its captions can be
   in pace with, and the same length the segments are placed against. A run with
   nothing to caption streams as usual.
+- **A feed needs no resolve.** Every item a podcast feed publishes states what
+  playing it needs, so an item is played as the listing gave it and the audio
+  goes to mpv directly. Bloomberg reaches that state by another route: its own
+  series pages refuse anything that is not a browser, so the show is read as the
+  feed its host publishes. BBC Audio reads a listing from the page's own payload
+  and the audio from the version the programme's JSON names, which is the
+  syndication every podcast client is served.
 
-So `subcast --subs` on an RTÉ episode prepares first and plays second, while a
-YouTube video starts as soon as the listing says what to play: a YouTube run
-resolves, downloads captions and transcribes beside the playback, and hands the
-subtitle file to mpv mid-play when it lands. A caption failure is reported as a
-line during playback, not as the end of the run.
+Captions are made while the item plays, and what is written as they are heard
+is the subtitle file mpv reads again each time it grows. A file is the easy
+case: the model hears it far faster than it plays, so each cue is written as
+soon as the words after it have been heard and stays ahead of the picture
+(`subtitles.HeardWhilePlaying`). The audio is fetched first, because that is the
+copy the captions belong to - it is the only thing in front of the first frame
+besides the listing and the resolve.
+
+A broadcast is the same idea with the audio arriving in real time
+(`live.LiveCaptions`), and both present it the same way: the player hands the
+file to mpv once and reloads it whenever the source says there is more. A
+YouTube video skips even the audio: mpv is handed the page URL and resolves it
+while the download happens behind. A caption failure is reported as a line
+during playback, not as the end of the run.
+
+Only a transcript that was heard to the end is cached. A run that ends first
+keeps the captions it heard and caches nothing, so the next run hears the file
+again rather than play against a transcript of part of an episode.
+
+The audio has to be the same copy for both, because a site can serve a different
+one each time: RTÉ stitches ads in per request, and Bloomberg's host serves a
+file with ads round the content. A transcript timed against one copy is out of
+pace with another - the transcript Omny publishes for an episode ran a sentence
+ahead of the audio its enclosure served - which is why captions come from
+hearing the audio this run fetched, and why a transcript a feed publishes is not
+used.
 
 ## Playback start and the chapter caveat
 

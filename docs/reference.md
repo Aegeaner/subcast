@@ -11,8 +11,9 @@ reasoning behind them, see the [explanation](explanation.md).
 subcast [url] [options]
 ```
 
-`url` is a YouTube video, playlist or channel, or an RTÉ Radio 1 programme or
-episode. If you omit it, subcast works on the latest Morning Ireland.
+`url` is a YouTube video, playlist or channel, a BBC Audio page, a Bloomberg
+podcast series, a podcast feed, or an RTÉ Radio 1 programme or episode. If you
+omit it, subcast works on the latest Morning Ireland.
 
 ## Options
 
@@ -26,14 +27,14 @@ episode. If you omit it, subcast works on the latest Morning Ireland.
 | `--search QUERY` | Search YouTube instead of taking a URL. |
 | `--feed NAME` | Open a saved feed, by name or by its number in `--feeds`. |
 | `--feeds` | List the saved feeds and stop. |
-| `--add-feed` | Save the URL as a feed: a YouTube playlist or channel, or an RTÉ programme. Named by `--name`, or after the listing. |
+| `--add-feed` | Save the URL as a feed: a YouTube playlist or channel, an RTÉ programme, a BBC Audio programme or category, a Bloomberg podcast series, or any podcast feed. Named by `--name`, or after the listing. |
 | `--name NAME` | The name `--add-feed` saves the feed under. |
 | `--remove-feed NAME` | Forget the feed called `NAME`. |
 | `--save` | Download into `~/Videos/<source>/` instead of streaming, then stop. |
 | `--no-play` | Prepare everything and start no player. |
 | `--audio-only` | Play the audio with terminal captions instead of video in a window. |
 | `--quality HEIGHT` | Maximum video height for streaming and `--save`. Default `1080`. |
-| `--subs`, `--subtitles` | Transcribe the item locally where the source publishes no captions. On a live broadcast this is the only way it gets any: the audio is transcribed as it airs. |
+| `--subs`, `--subtitles` | Transcribe the item locally where the source publishes no captions. The audio is fetched first, because it is what the captions are timed against, and the captions are written as they are heard: they appear while the item plays and keep ahead of it. On a live broadcast this is the only way it gets captions at all. |
 | `--subs-from {auto,published,asr}` | Where subtitles come from. Default `auto`. On a broadcast, `published` leaves it with none, because its captions have to be made. |
 | `--whisper-model MODEL` | The faster-whisper model used for transcription. Default `small.en`. |
 | `--whisper-device {auto,cuda,cpu}` | Device for transcription. Default `auto`. |
@@ -54,7 +55,7 @@ episode. If you omit it, subcast works on the latest Morning Ireland.
 
 | Item | Path |
 | --- | --- |
-| `--save` output | `~/Videos/<source>/<title>.mp3` (RTÉ) or `.mp4` (YouTube) |
+| `--save` output | `~/Videos/<source>/<title>.mp3` (RTÉ, BBC, Bloomberg and podcasts) or `.mp4` (YouTube) |
 | Subtitles | `$XDG_CACHE_HOME/subcast/<source>/<id>.srt`, `<id>.chapters.txt` |
 | Broadcast captions | `$XDG_CACHE_HOME/subcast/<source>/<id>.live.srt`, written as the broadcast airs |
 | Cache | `$XDG_CACHE_HOME/subcast/<source>/<id>.mp3`, `.mp4`, `.cues.json`, `.segments.json`, `.meta.json` |
@@ -63,7 +64,7 @@ episode. If you omit it, subcast works on the latest Morning Ireland.
 | Feeds | `$XDG_CONFIG_HOME/subcast/feeds.json` |
 
 The cache is keyed by the item's own id: an episode UUID for RTÉ, a video id for
-YouTube.
+YouTube, an episode id for BBC, a clip id for a podcast.
 
 ## Cache lifetimes
 
@@ -80,6 +81,9 @@ YouTube.
 
 | Source | Behaviour |
 | --- | --- |
+| `bbc` | A BBC Audio page: a programme, a series, a category, or one episode. Subcast reads the payload the page is rendered from, so a listing costs one request; the version the audio is addressed by comes from the programme's own JSON when an item is played, and the audio is the mp3 BBC syndicates. A category lists programmes, and an item that is a programme plays its newest episode. A programme page carries ten episodes at a time, and a deeper listing asks for the pages it needs. |
+| `bloomberg` | A Bloomberg podcast series. Bloomberg's own pages refuse anything that is not a browser, so the show is read where it is hosted: its show page names the programme and links the feed it is syndicated as. Everything after that is a podcast feed. |
+| `podcast` | Any RSS feed whose items enclose audio. The enclosure is the audio and `itunes:duration` its length, and a resolve has nothing left to find. A transcript a feed publishes is not read: it is timed against the file the publisher made, which is not always the file that arrives (`--subs` hears the audio that plays). |
 | `rte` | Any RTÉ Radio 1 programme. Its page is a listing, and an episode URL is one item. Subcast reads the clip list and the programme's own schedule from the pages it fetches, and drives the RTÉ player in a headless browser for the stream URL, so an item of this source is never played from its page URL. Segment titles come from the clock times where the clip list carries them, and from the spoken words where it does not. A captioned episode plays the audio it was transcribed from, not a second fetch of the stream. |
 | `youtube` | Videos, playlists and channels, listed with `yt-dlp --flat-playlist`. Chapters and caption tracks come from the player JSON. A broadcast is marked as one: it is played as it airs, and captioned by transcribing it while it plays. |
 
@@ -136,6 +140,9 @@ alone, so a stock mpv works.
 | `Live captions failed: <reason>; playing without them.` | The broadcast's capture or transcription gave up. Playback carries on. |
 | `Live captions cannot keep up with this broadcast; skipping ahead to the live edge.` | Transcription is slower than the broadcast, so the oldest waiting chunks are dropped. Said once. |
 | `Live captions: <n> chunk(s) heard, <m> with no speech, <k> skipped.` | The end of a broadcast run: what its captions came to. |
+| `Heard <n> min / <m> min (<p>%)` | How much of a file being transcribed has been heard. |
+| `Captions heard to <n> min of <m> min; the rest is made next run.` | The item ended before the whole file had been heard, so nothing was cached. |
+| `Captions failed: <reason>; playing without them.` | The transcription gave up. Playback carries on. |
 | `A live broadcast cannot be saved while it airs; wait for the video of it.` | `--save` on a broadcast, which has no end to download up to. |
 | `A broadcast is prepared by playing it; --no-play leaves nothing to do.` | `--no-play` on a broadcast. |
 | `mpv could not load that stream; trying once more...` | The retry after exit status 2. |
