@@ -21,7 +21,6 @@ import time
 import tty
 from pathlib import Path
 
-from .live import LiveCaptions
 from .player import (
     LIVE_AUDIO_FORMAT,
     SAVE_SECONDS,
@@ -32,7 +31,7 @@ from .player import (
     socket_directory,
     start_arguments,
 )
-from .subtitles import PendingSubtitles, Prepared
+from .subtitles import GrowingCaptions, PendingSubtitles, Prepared
 
 # Rows the block occupies: one title line, the previous line of dialogue,
 # up to two lines of what is being said now, and the playback clock. Kept
@@ -794,7 +793,7 @@ def _follow(
     # A broadcast's captions are never finished: what settles there is the
     # job that keeps making them, and its cues are read again on each
     # redraw.
-    live = settled if isinstance(settled, LiveCaptions) else None
+    live = settled if isinstance(settled, GrowingCaptions) else None
 
     if live is not None:
 

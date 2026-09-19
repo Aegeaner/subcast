@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from .srt import split_cues, write_srt
-from .subtitles import transcribe_cues
+from .subtitles import GrowingCaptions, transcribe_cues
 
 # How much faster than the clock mpv's reading edge may move before it is
 # taken for what it is: mpv filling its buffer rather than the broadcast's
@@ -588,7 +588,7 @@ class Capture:
         )
 
 
-class LiveCaptions:
+class LiveCaptions(GrowingCaptions):
     """
     A broadcast's captions, transcribed as it airs.
 

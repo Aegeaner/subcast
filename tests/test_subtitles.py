@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import requests
 
-from subcast import subtitles
+from subcast import config, subtitles
 from subcast.sources import Captions, Media, youtube
 
 VTT = """WEBVTT
@@ -316,3 +318,214 @@ def test_settings_replace_the_defaults_rather_than_sitting_beside_them():
     assert model.seen["beam_size"] == 1
     assert model.seen["language"] == "en"
     assert model.seen["condition_on_previous_text"] is False
+
+
+class Segment:
+    """One stretch of speech, as the model hands it over."""
+
+    def __init__(self, start: float, end: float, text: str) -> None:
+        self.start = start
+        self.end = end
+        self.text = text
+
+
+class Hearing:
+    """
+    A model that hands its segments over one at a time, with a pause in the
+    middle, so a test can look at what has been written before the file has
+    been heard to its end.
+    """
+
+    def __init__(self, early, late, duration: float, gate=None) -> None:
+        self._early = early
+        self._late = late
+        self._gate = gate
+        self.info = SimpleNamespace(duration=duration)
+        self.options: dict = {}
+
+    def transcribe(self, path, **options):
+        self.options = options
+
+        def stream():
+            for segment in self._early:
+                yield segment
+
+            if self._gate is not None:
+                self._gate.wait(timeout=5)
+
+            for segment in self._late:
+                yield segment
+
+        return stream(), self.info
+
+
+def wait_for(check, timeout: float = 5.0) -> bool:
+    """
+    Let the hearing's thread run until `check` says so.
+    """
+
+    deadline = time.monotonic() + timeout
+
+    while time.monotonic() < deadline:
+
+        if check():
+            return True
+
+        time.sleep(0.01)
+
+    return False
+
+
+def heard(
+    monkeypatch,
+    tmp_path,
+    model,
+) -> tuple[subtitles.HeardWhilePlaying, Media]:
+    """
+    A file being heard, in a cache of its own.
+    """
+
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(subtitles, "load_model", lambda name, device: model)
+
+    item = Media(
+        source="bbc",
+        key="one",
+        title="An episode",
+        url="https://example.test/page",
+        kind="audio",
+        duration=60.0,
+    )
+
+    audio = tmp_path / "bbc" / "one.mp3"
+    audio.parent.mkdir(parents=True, exist_ok=True)
+    audio.write_bytes(b"audio")
+
+    return (
+        subtitles.HeardWhilePlaying(item, audio, "small.en", "auto"),
+        item,
+    )
+
+
+def test_a_file_is_heard_while_it_plays(monkeypatch, tmp_path: Path):
+    """
+    The captions are written as the words are heard, so the first ones are
+    on screen while the rest of the file is still going through the model -
+    rather than at the end of a transcription that takes minutes.
+    """
+
+    gate = threading.Event()
+
+    model = Hearing(
+        early=[Segment(0.0, 10.0, "The first thing said.")],
+        late=[
+            Segment(10.0, 20.0, "The second thing said."),
+            Segment(20.0, 30.0, "The last thing said."),
+        ],
+        duration=30.0,
+        gate=gate,
+    )
+
+    captioning, item = heard(monkeypatch, tmp_path, model)
+    srt = subtitles.cache_stem(item).with_suffix(".srt")
+
+    captioning.start()
+
+    assert wait_for(lambda: captioning.revision() > 0)
+
+    # the audio is still being heard, and the first line is already there
+    assert captioning.cues() == [(0.0, 10.0, "The first thing said.")]
+    assert "The first thing said." in srt.read_text(encoding="utf-8")
+
+    gate.set()
+
+    assert wait_for(
+        lambda: subtitles.cache_stem(item).with_suffix(".cues.json").exists()
+    )
+
+    # and when the whole file has been heard, the transcript is cached and
+    # the artifacts are rendered from it, so a replay costs nothing
+    assert captioning.cues() == [
+        (0.0, 10.0, "The first thing said."),
+        (10.0, 20.0, "The second thing said."),
+        (20.0, 30.0, "The last thing said."),
+    ]
+
+    saved = (
+        subtitles.cache_stem(item)
+        .with_suffix(".srt")
+        .read_text(encoding="utf-8")
+    )
+
+    assert "The last thing said." in saved
+    assert captioning.revision() > 1
+    assert captioning.summary() is None
+
+    captioning.stop()
+
+
+def test_a_run_that_ends_first_keeps_what_it_heard(monkeypatch, tmp_path: Path):
+    """
+    Stopping is not failing: what was heard stays on screen, and nothing is
+    cached, so the next run hears the file rather than playing against a
+    transcript of half an episode.
+    """
+
+    gate = threading.Event()
+
+    model = Hearing(
+        early=[Segment(0.0, 10.0, "The first thing said.")],
+        late=[Segment(10.0, 20.0, "The second thing said.")],
+        duration=120.0,
+        gate=gate,
+    )
+
+    captioning, item = heard(monkeypatch, tmp_path, model)
+
+    captioning.start()
+
+    assert wait_for(lambda: captioning.revision() > 0)
+
+    captioning.stop()
+    gate.set()
+
+    assert "The first thing said." in (
+        subtitles.cache_stem(item)
+        .with_suffix(".srt")
+        .read_text(encoding="utf-8")
+    )
+
+    assert not subtitles.has_transcript(item)
+
+    summary = captioning.summary()
+
+    assert summary is not None
+    assert "next run" in summary
+
+
+def test_a_hearing_that_fails_is_a_line_rather_than_the_end(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    A model that cannot be loaded, or an audio file that will not open, is
+    something the run says once and plays on from - the captions are the
+    thing that is lost, not the episode.
+    """
+
+    class Broken:
+        info = SimpleNamespace(duration=60.0)
+
+        def transcribe(self, path, **options):
+            raise RuntimeError("no speech in that file")
+
+    captioning, _item = heard(monkeypatch, tmp_path, Broken())
+
+    captioning.start()
+    captioning.stop()
+
+    failure = captioning.failure_message()
+
+    assert failure is not None
+    assert "no speech in that file" in failure
+    assert "playing without them" in failure

@@ -93,6 +93,38 @@ def test_mpv_refusing_the_file_is_said_out_loud(capsys):
     assert "invalid parameter" in capsys.readouterr().out
 
 
+def test_a_refusal_while_mpv_is_starting_is_asked_again(capsys):
+    """
+    mpv opens its socket before it will take a file, so captions that were
+    ready before playback began are refused once; the file is offered
+    again rather than lost for the run.
+    """
+
+    class Starting:
+        """An mpv that refuses the first command and takes the next."""
+
+        def __init__(self) -> None:
+            self.commands: list[tuple[str, ...]] = []
+
+        def command(self, *command: str) -> str | None:
+            self.commands.append(command)
+            return (
+                "error running command"
+                if len(self.commands) == 1
+                else None
+            )
+
+    client = Starting()
+    job = PendingSubtitles.finished(prepared())
+
+    assert player.attach_subtitles(client, job) is True
+    assert client.commands == [
+        ("sub-add", "/tmp/example.srt", "select"),
+        ("sub-add", "/tmp/example.srt", "select"),
+    ]
+    assert capsys.readouterr().out == ""
+
+
 def test_streams_are_handed_to_mpv_instead_of_a_page():
     """
     `--ytdl=no` with the URLs is what saves mpv the extraction subcast has
@@ -667,9 +699,30 @@ def test_a_broadcast_keeps_mpv_from_printing_its_track_list(monkeypatch):
     player.play_window("https://example.test/watch")
     player.play_with_mpv("https://example.test/watch", live=True)
 
+    # a file being heard reloads its captions the same way, and asks for its
+    # sound the way any other recording does
+    player.play_with_mpv(
+        "https://example.test/audio.mp3",
+        live=False,
+        reloading=True,
+    )
+    player.play_with_mpv(
+        "https://example.test/watch",
+        stream=True,
+        live=False,
+        reloading=True,
+    )
+
     assert "--msg-level=cplayer=warn" in commands[0]
     assert "--msg-level=cplayer=warn" not in commands[1]
     assert "--msg-level=cplayer=warn" in commands[2]
+    assert "--msg-level=cplayer=warn" in commands[3]
+    assert "--msg-level=cplayer=warn" in commands[4]
+
+    # reloading is not a broadcast: the cheapest format carrying sound is
+    # asked for only when the item really is one
+    assert "--ytdl-format=bestaudio/best" in commands[4]
+    assert "--ytdl-format=worstaudio/worst" not in commands[4]
 
 
 def test_only_the_sound_of_a_broadcast_is_asked_for(monkeypatch):

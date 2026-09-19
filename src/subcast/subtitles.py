@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,84 @@ class Prepared:
     chapters_path: Path | None
     cues: list[tuple[float, float, str]]
     segments: list[tuple[float, float, str]]
+
+
+class GrowingCaptions:
+    """
+    Captions that arrive while the item plays.
+
+    A source of them answers three questions - `start`, `cues` and
+    `revision`, and `stop` when the play is over - and where it answers
+    from is its own business: a broadcast being chunked as it airs
+    (`live.LiveCaptions`), or a file being heard (`HeardWhilePlaying`).
+    Playback drives either the same way: the subtitle file is handed to mpv
+    once and reloaded whenever `revision` changes, so a caption is on
+    screen as soon as it is written.
+    """
+
+    srt_path: Path
+
+    def start(self) -> None:
+        """
+        Begin, however many times this is asked.
+        """
+
+        raise NotImplementedError
+
+    def cues(self) -> list[tuple[float, float, str]]:
+        """
+        What has been said so far.
+        """
+
+        raise NotImplementedError
+
+    def revision(self) -> int:
+        """
+        A number that changes when the subtitles on disk do.
+        """
+
+        raise NotImplementedError
+
+    def sample(
+        self,
+        wall: float,
+        edge: float,
+    ) -> None:
+        """
+        Where mpv has read up to, and when it said so.
+
+        Carried because a broadcast is placed from that reading, and
+        ignored by a source whose cues are already on the item's own
+        timeline.
+        """
+
+    def take_notes(self) -> list[str]:
+        """
+        What is worth saying, each line once, and nothing twice.
+        """
+
+        return []
+
+    def failure_message(self) -> str | None:
+        """
+        What went wrong, as a line to print, or None when nothing did.
+        """
+
+        return None
+
+    def summary(self) -> str | None:
+        """
+        What the captions came to, for the end of the run.
+        """
+
+        return None
+
+    def stop(self) -> None:
+        """
+        Stop hearing, keeping what has been written.
+        """
+
+        raise NotImplementedError
 
 
 class PendingSubtitles(Background["Prepared | LiveCaptions | None"]):
@@ -512,16 +591,7 @@ def prepare(
         exist_ok=True,
     )
 
-    srt_path = stem.with_suffix(".srt")
     cues_path = stem.with_suffix(".cues.json")
-
-    segments_path = stem.with_suffix(
-        ".segments.json"
-    )
-
-    chapters_path = stem.with_suffix(
-        ".chapters.txt"
-    )
 
     if has_transcript(media):
 
@@ -566,6 +636,43 @@ def prepare(
             cues,
             cues_path,
         )
+
+    return render(
+        media,
+        cues,
+        audio_path,
+    )
+
+
+def render(
+    media,
+    cues: list[tuple[float, float, str]],
+    audio_path: Path | None,
+) -> Prepared:
+    """
+    The segments, the subtitles and the chapters a transcript comes to.
+
+    Separated from the hearing that produced the cues because a file being
+    heard while it plays has its transcript already: it renders the same
+    artifacts at the end, from the text it has just written down.
+    """
+
+    stem = cache_stem(media)
+
+    stem.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    srt_path = stem.with_suffix(".srt")
+
+    segments_path = stem.with_suffix(
+        ".segments.json"
+    )
+
+    chapters_path = stem.with_suffix(
+        ".chapters.txt"
+    )
 
     # Where the segments go is worked out again on every run, from the
     # transcript: it is where the segment titles come from, the rules for
@@ -658,3 +765,326 @@ def prepare(
         framed,
         segments,
     )
+
+
+# How much of the audio is heard before the first cues are written, and how
+# much more between one write and the next: soon enough that a run starts
+# showing captions while it is still saying hello, rarely enough that the
+# file is not rewritten under mpv for every sentence.
+FIRST_FLUSH_SECONDS = 8.0
+FLUSH_SECONDS = 30.0
+
+# How long the hearing is given to come out of the stretch of audio it is in
+# when playback ends: it is the model's own decode of one window, and the
+# thread is a daemon, so waiting longer buys nothing.
+HEARING_STOP_SECONDS = 5.0
+
+
+class HeardWhilePlaying(GrowingCaptions):
+    """
+    A file's captions, heard and written while it plays.
+
+    The model hears a file faster than the file plays, so a cue can be
+    written as soon as the words after it have been heard and is then ahead
+    of the picture rather than behind it - which is the difference from a
+    broadcast, where the audio only exists as fast as it airs. mpv is given
+    the file once and reloads it as it grows, the same way a broadcast's
+    captions arrive.
+
+    The transcript, the segments and the chapters are written when the
+    whole file has been heard, so a replay is as cheap as any other. A run
+    that ends first keeps the captions it heard and caches nothing: the
+    next run hears the file again rather than play against a transcript of
+    half an episode.
+    """
+
+    def __init__(
+        self,
+        media,
+        audio_path: Path,
+        model_name: str,
+        device: str,
+    ) -> None:
+
+        self.srt_path = cache_stem(media).with_suffix(
+            ".srt"
+        )
+
+        self._media = media
+        self._audio = audio_path
+        self._model_name = model_name
+        self._device = device
+
+        self._lock = threading.Lock()
+        self._cues: list[tuple[float, float, str]] = []
+        self._shown: list[tuple[float, float, str]] = []
+        self._revision = 0
+        self._failure: str | None = None
+        self._notes: list[str] = []
+
+        self._heard = 0.0
+        self._total = 0.0
+        self._complete = False
+
+        self._stopping = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        """
+        Set the hearing going. Starting twice does nothing.
+        """
+
+        if self._thread is not None:
+
+            return
+
+        self.srt_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        self._thread = threading.Thread(
+            target=self._work,
+            daemon=True,
+        )
+
+        self._thread.start()
+
+    def cues(self) -> list[tuple[float, float, str]]:
+        """
+        What has been said so far.
+        """
+
+        with self._lock:
+
+            return list(self._cues)
+
+    def revision(self) -> int:
+        """
+        A number that changes when the subtitles on disk do.
+        """
+
+        with self._lock:
+
+            return self._revision
+
+    def failure_message(self) -> str | None:
+        """
+        What went wrong, as a line to print, or None when nothing did.
+        """
+
+        with self._lock:
+
+            failure = self._failure
+
+        if failure is None:
+
+            return None
+
+        return (
+            f"    Captions failed: {failure}; "
+            f"playing without them."
+        )
+
+    def take_notes(self) -> list[str]:
+        """
+        What is worth saying, each line once.
+
+        Carried rather than printed: the hearing runs while a caption block
+        is drawing, and only the run that owns the terminal may write to
+        it.
+        """
+
+        with self._lock:
+
+            notes = self._notes
+            self._notes = []
+
+        return notes
+
+    def summary(self) -> str | None:
+        """
+        What the captions came to, when the file was not heard to its end.
+        """
+
+        with self._lock:
+
+            heard = self._heard
+            total = self._total
+            complete = self._complete
+
+        if complete or not heard:
+
+            return None
+
+        return (
+            f"    Captions heard to {heard / 60:.0f} min of "
+            f"{total / 60:.0f} min; the rest is made next run."
+        )
+
+    def stop(self) -> None:
+        """
+        Stop hearing, keeping the captions it wrote.
+        """
+
+        self._stopping.set()
+
+        if self._thread is not None:
+
+            self._thread.join(
+                timeout=HEARING_STOP_SECONDS
+            )
+
+    def _work(self) -> None:
+        """
+        Hear the file, writing the captions as they are heard.
+        """
+
+        try:
+
+            self._hear()
+
+        except Exception as exc:  # noqa: BLE001 - reported as a line
+
+            with self._lock:
+
+                self._failure = str(exc)
+
+    def _hear(self) -> None:
+        """
+        The model over the file, one stretch of captions at a time.
+        """
+
+        model = load_model(
+            self._model_name,
+            self._device,
+        )
+
+        stream, info = _stream(
+            model,
+            self._audio,
+        )
+
+        with self._lock:
+
+            self._total = float(info.duration or 0.0)
+
+        said: list[tuple[float, float, str]] = []
+
+        next_flush = FIRST_FLUSH_SECONDS
+        reported = -1
+
+        for segment in stream:
+
+            if self._stopping.is_set():
+
+                return
+
+            text = segment.text.strip()
+
+            if text:
+
+                said.append(
+                    (
+                        float(segment.start),
+                        float(segment.end),
+                        text,
+                    )
+                )
+
+            end = float(segment.end)
+
+            if end >= next_flush:
+
+                next_flush = end + FLUSH_SECONDS
+
+                self._write(said)
+
+            minute = int(end // 60)
+
+            if (
+                minute != reported
+                and self._total
+            ):
+
+                reported = minute
+
+                self._note(
+                    f"    Heard {minute} min / "
+                    f"{self._total / 60:.0f} min "
+                    f"({end / self._total * 100:.0f}%)"
+                )
+
+        if not said:
+
+            raise RuntimeError(
+                "Whisper produced no speech for this episode."
+            )
+
+        if self._stopping.is_set():
+
+            return
+
+        self._write(said)
+
+        save_cues(
+            said,
+            cache_stem(self._media).with_suffix(
+                ".cues.json"
+            ),
+        )
+
+        with self._lock:
+
+            self._complete = True
+
+        render(
+            self._media,
+            said,
+            self._audio,
+        )
+
+    def _write(
+        self,
+        said: list[tuple[float, float, str]],
+    ) -> None:
+        """
+        Write what has been heard so far, so mpv can read it again.
+
+        Only the cues that are new are laid out: the file is rewritten whole
+        every time, but the work of fitting it to the terminal is done once
+        per cue however often it is written.
+        """
+
+        with self._lock:
+
+            fresh = said[len(self._cues):]
+
+            self._cues = list(said)
+            self._shown.extend(
+                split_cues(fresh)
+            )
+
+            if said:
+
+                self._heard = said[-1][1]
+
+            shown = list(self._shown)
+
+        write_srt(
+            shown,
+            self.srt_path,
+        )
+
+        with self._lock:
+
+            self._revision += 1
+
+    def _note(
+        self,
+        line: str,
+    ) -> None:
+
+        with self._lock:
+
+            self._notes.append(line)

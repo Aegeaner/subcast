@@ -272,7 +272,7 @@ def test_the_preparation_runs_beside_playback(monkeypatch):
         resolved.append(item.key)
         return item
 
-    def prepare(media, args, saved):
+    def prepare(media, args, saved, playing=False):
         release.wait(timeout=5)
         return PREPARED
 
@@ -297,26 +297,108 @@ def test_no_subtitles_wanted_means_no_preparation(monkeypatch):
     monkeypatch.setattr(
         cli,
         "prepare_item",
-        lambda media, args, saved: pytest.fail("prepared anyway"),
+        lambda media, args, saved, playing=False: pytest.fail("prepared anyway"),
     )
 
     assert cli.start_preparation(Source(), media(), args(), None).wait() is None
     assert cli.ready_subtitles(media(), args(), None) is None
 
 
-def test_an_item_that_must_be_resolved_is_ready_before_playback(monkeypatch):
+def test_an_item_already_resolved_is_only_transcribed_beside_playback(
+    monkeypatch,
+):
+    """
+    A stream that comes out of a resolve had to be found before playback,
+    but the transcript did not have to: it is made while the item plays and
+    attached when it lands. The resolve is not asked for a second time.
+    """
+
+    monkeypatch.setattr(
+        cli,
+        "resolve_item",
+        lambda source, item: pytest.fail("resolved twice"),
+    )
     monkeypatch.setattr(cli, "wants_subtitles", lambda media, args: True)
     monkeypatch.setattr(
         cli,
         "prepare_item",
-        lambda media, args, saved: PREPARED,
+        lambda media, args, saved, playing=False: PREPARED,
     )
 
-    job = cli.ready_subtitles(media(), args(), None)
+    resolved = replace(
+        media(),
+        url="https://example.test/audio.mp3",
+        stream=False,
+    )
 
-    assert job is not None
-    assert job.done_yet() is True
+    job = cli.start_preparation(
+        Source(),
+        media(),
+        args(),
+        None,
+        media=resolved,
+    )
+
     assert job.wait() is PREPARED
+
+
+def test_the_audio_a_transcript_is_made_from_is_fetched_once(
+    monkeypatch,
+    tmp_path,
+):
+    """
+    The audio is what the captions are timed against, so it is here before
+    the first frame - and only what a transcript needs is fetched: a site
+    that publishes captions is not heard from a download, and a transcript
+    already on disk is not heard again.
+    """
+
+    fetched: list[str] = []
+
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(cli, "has_transcript", lambda media: False)
+    monkeypatch.setattr(
+        cli,
+        "acquire",
+        lambda media, stem: (
+            fetched.append(media.key) or Path("/tmp/audio.mp3")
+        ),
+    )
+
+    item = media()
+
+    assert cli.captions_audio(
+        item,
+        args(subs=True),
+        None,
+    ) == Path("/tmp/audio.mp3")
+
+    # a file --save wrote is the audio, and needs no fetching
+    assert cli.captions_audio(
+        item,
+        args(subs=True),
+        Path("/tmp/saved.mp3"),
+    ) == Path("/tmp/saved.mp3")
+
+    assert cli.captions_audio(
+        media(PUBLISHED),
+        args(),
+        None,
+    ) is None
+
+    monkeypatch.setattr(cli, "has_transcript", lambda media: True)
+
+    assert cli.captions_audio(item, args(subs=True), None) is None
+
+    # and audio a previous run left in the cache is not fetched again
+    monkeypatch.setattr(cli, "has_transcript", lambda media: False)
+
+    cached = tmp_path / media().source / f"{item.key}.mp3"
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    cached.write_bytes(b"audio")
+
+    assert cli.captions_audio(item, args(subs=True), None) == cached
+    assert fetched == ["abc"]
 
 
 def test_a_captioned_episode_plays_the_audio_it_transcribed(
@@ -423,7 +505,7 @@ def test_the_next_item_is_prepared_while_this_one_plays(monkeypatch):
         order.append(item.key)
         return item
 
-    def prepare(media, args, saved):
+    def prepare(media, args, saved, playing=False):
         if media.key == "abc":
             current_done.wait(timeout=5)
         return PREPARED
@@ -500,7 +582,7 @@ def test_a_listing_is_played_item_after_item(monkeypatch):
     monkeypatch.setattr(cli, "resolve_item", lambda source, item: item)
     monkeypatch.setattr(cli, "wants_subtitles", lambda media, args: True)
 
-    def prepare(media, args, saved):
+    def prepare(media, args, saved, playing=False):
         order.append(f"prepared {media.key}")
         return PREPARED
 
@@ -522,6 +604,100 @@ def test_a_listing_is_played_item_after_item(monkeypatch):
         "played one",
         "played two",
     ]
+
+
+def test_an_item_must_be_resolved_and_heard_from_the_same_audio(
+    monkeypatch,
+):
+    """
+    The whole loop for a source mpv cannot play a page of, because this is
+    where the pieces join: the resolve and the audio happen in front of the
+    first frame, the transcript happens behind it, and the job is handed to
+    playback still running rather than finished.
+    """
+    import argparse as argparse_module
+
+    order: list[str] = []
+    release = threading.Event()
+
+    item = replace(
+        media(),
+        kind="audio",
+        stream=False,
+        url="https://example.test/page",
+    )
+
+    resolved = replace(
+        item,
+        url="https://example.test/audio.mp3",
+    )
+
+    monkeypatch.setattr(
+        cli,
+        "parse_args",
+        lambda: argparse_module.Namespace(
+            url="https://example.test/page",
+            list=False,
+            limit=None,
+            feed="",
+            search="",
+            feeds=False,
+            add_feed=False,
+            name="",
+            remove_feed="",
+            pick=None,
+            save=False,
+            no_play=False,
+            audio_only=False,
+            quality=1080,
+            subs=True,
+            subs_from="auto",
+            whisper_model="small.en",
+            whisper_device="auto",
+            subs_scale="auto",
+            subs_style="auto",
+            resume=True,
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "resolve_target",
+        lambda args: cli.Target(Source(), "page", "page"),
+    )
+    monkeypatch.setattr(cli, "collect", lambda source, url, limit: [item])
+    monkeypatch.setattr(cli, "wants_subtitles", lambda media, args: True)
+    monkeypatch.setattr(cli, "saved_positions", lambda media, args: None)
+    monkeypatch.setattr(cli, "chapters_for", lambda media: None)
+
+    def resolve(source, listed):
+        order.append("resolved")
+        return resolved
+
+    def fetch_audio(media, args, saved):
+        order.append("audio")
+
+    def prepare(media, args, saved, playing=False):
+        release.wait(timeout=5)
+        order.append("transcribed")
+        return PREPARED
+
+    def play(source, listed, media, args, subtitles):
+        assert media.url == "https://example.test/audio.mp3"
+        assert subtitles.done_yet() is False
+        order.append("played")
+        release.set()
+        assert subtitles.wait() is PREPARED
+        return 0
+
+    monkeypatch.setattr(cli, "resolve_item", resolve)
+    monkeypatch.setattr(cli, "captions_audio", fetch_audio)
+    monkeypatch.setattr(cli, "prepare_item", prepare)
+    monkeypatch.setattr(cli, "play_item", play)
+
+    assert cli.main() == 0
+
+    # the audio is here before the first frame, the transcript after it
+    assert order == ["resolved", "audio", "played", "transcribed"]
 
 
 def test_a_cached_listing_opens_the_menu_and_refreshes_behind_it(
@@ -854,7 +1030,7 @@ def test_a_broadcast_is_neither_saved_nor_prepared_without_playback(
     monkeypatch.setattr(
         cli,
         "prepare_item",
-        lambda media, args, saved: pytest.fail("prepared a broadcast anyway"),
+        lambda media, args, saved, playing=False: pytest.fail("prepared a broadcast anyway"),
     )
     monkeypatch.setattr(
         cli,
@@ -902,3 +1078,103 @@ def test_a_stop_signal_ends_the_run_the_way_ctrl_c_does(monkeypatch):
     with pytest.raises(KeyboardInterrupt):
 
         installed[cli.signal.SIGTERM](cli.signal.SIGTERM, None)
+
+
+def test_a_file_the_run_hears_is_captioned_while_it_plays(monkeypatch, tmp_path):
+    """
+    A source whose stream came out of a resolve has its audio in hand when
+    playback starts, so the captions can be written as the model hears it.
+    A run that plays nothing has to wait for the whole transcript instead:
+    there is no picture for a caption to arrive behind.
+    """
+
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(cli, "wants_subtitles", lambda media, args: True)
+    monkeypatch.setattr(cli, "has_transcript", lambda media: False)
+    monkeypatch.setattr(
+        cli,
+        "captions_audio",
+        lambda media, args, saved: Path("/tmp/audio.mp3"),
+    )
+
+    item = replace(media(), kind="audio", stream=False)
+
+    heard = cli.prepare_item(item, args(subs=True), None, playing=True)
+
+    assert isinstance(heard, cli.HeardWhilePlaying)
+
+    prepared: list = []
+
+    monkeypatch.setattr(
+        cli,
+        "prepare",
+        lambda media, audio, model, device, subs_from: (
+            prepared.append(audio) or PREPARED
+        ),
+    )
+
+    assert cli.prepare_item(item, args(subs=True), None) is PREPARED
+    assert prepared == [Path("/tmp/audio.mp3")]
+
+
+@pytest.mark.parametrize(
+    ("captions", "stream", "transcript", "subs_from", "expected"),
+    [
+        # a file the run has to hear: nothing published, nothing cached
+        ((), False, False, "auto", True),
+        # a track the source publishes costs no hearing
+        (PUBLISHED, False, False, "auto", False),
+        # nor does a transcript already on disk
+        ((), False, True, "auto", False),
+        # a page mpv resolves is playing before the audio exists
+        ((), True, False, "auto", False),
+        # and published captions can be refused
+        ((), False, False, "published", False),
+    ],
+)
+def test_a_run_hears_the_audio_only_when_there_is_nothing_to_read(
+    monkeypatch,
+    captions,
+    stream: bool,
+    transcript: bool,
+    subs_from: str,
+    expected: bool,
+):
+    monkeypatch.setattr(cli, "has_transcript", lambda media: transcript)
+
+    item = replace(
+        media(captions),
+        stream=stream,
+    )
+
+    assert (
+        cli.hears_the_audio(
+            item,
+            args(subs=True, subs_from=subs_from),
+        )
+        is expected
+    )
+
+
+def test_the_hearing_ends_with_the_playback(monkeypatch, capsys):
+    """
+    What ends the captions of a file is the run ending, the way a
+    broadcast's capture ends: the item is over, so there is nothing left to
+    hear it for.
+    """
+
+    class Hearing(cli.GrowingCaptions):
+        stopped = 0
+
+        def stop(self):
+            Hearing.stopped += 1
+
+        def summary(self):
+            return "    Captions heard to 1 min of 5 min."
+
+    job = cli.PendingSubtitles.finished(Hearing())
+
+    cli.stop_captions(job)
+
+    assert Hearing.stopped == 1
+    assert "Captions heard to 1 min" in capsys.readouterr().out

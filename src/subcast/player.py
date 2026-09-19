@@ -11,9 +11,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from .live import LiveCaptions
 from .meta import Streams
-from .subtitles import PendingSubtitles
+from .subtitles import GrowingCaptions, PendingSubtitles
 
 # How often where an item got to is written down. Often enough that a run
 # cut short costs seconds, rarely enough to leave the socket alone.
@@ -22,6 +21,16 @@ SAVE_SECONDS = 5.0
 # How often to look while subtitles are still being prepared: the file is
 # usually seconds away, and attaching it late is worse than asking often.
 SUBTITLES_POLL_SECONDS = 0.5
+
+# mpv opens its IPC socket before it will take a file, and answers a
+# command that arrives in between with "error running command": measured,
+# commands sent the moment the socket appears were refused 17 times out
+# of 30, and the same command a moment later always worked. A run whose
+# captions were ready before playback began asks on its first poll, which
+# is inside that window, so a refusal is asked about again rather than
+# left as a run that plays without its captions.
+ATTACH_TRIES = 3
+ATTACH_PAUSE = 0.2
 
 # Reaching within this much of the end counts as watched: resuming there
 # would start at the credits.
@@ -486,6 +495,22 @@ def attach_subtitles(
         "select",
     )
 
+    # A refusal this early is mpv not being ready rather than the file
+    # being wrong (see ATTACH_TRIES), so the same file is offered again.
+    for _attempt in range(ATTACH_TRIES - 1):
+
+        if problem is None:
+
+            break
+
+        time.sleep(ATTACH_PAUSE)
+
+        problem = client.command(
+            "sub-add",
+            str(prepared.srt_path),
+            "select",
+        )
+
     if problem is not None:
 
         print(
@@ -498,9 +523,11 @@ def attach_subtitles(
 
 def settled_live(
     subtitles: PendingSubtitles,
-) -> LiveCaptions | None:
+) -> GrowingCaptions | None:
     """
-    The live job a preparation turned into, once the resolve is done.
+    The captions a preparation turned into, when they are made while the
+    item plays - a broadcast's, or a file's being heard - once the resolve
+    is done.
 
     Until then there is nothing to hand mpv either way, and a video that
     was not a broadcast gets its subtitle file the way it always has.
@@ -512,13 +539,13 @@ def settled_live(
 
     value = subtitles.value()
 
-    return value if isinstance(value, LiveCaptions) else None
+    return value if isinstance(value, GrowingCaptions) else None
 
 
 class LiveView:
     """
-    mpv's side of a broadcast: where it has read up to, and the captions
-    that have landed since the last look.
+    mpv's side of captions that arrive while the item plays: where it has
+    read up to, and the captions that have landed since the last look.
 
     `cache-time` is the position mpv has read up to, which is the audio
     being captured at that moment - the one reading that says where a
@@ -529,7 +556,7 @@ class LiveView:
     def __init__(
         self,
         client: Ipc,
-        live: LiveCaptions,
+        live: GrowingCaptions,
     ) -> None:
 
         self.client = client
@@ -782,6 +809,7 @@ def play_with_mpv(
     subtitles: PendingSubtitles | None = None,
     streams: Streams | None = None,
     live: bool = False,
+    reloading: bool = False,
 ) -> int:
     """
     Play audio through mpv's own terminal output.
@@ -791,12 +819,15 @@ def play_with_mpv(
     falls back to the page URL, which mpv extracts for itself, so a refusal
     costs a retry rather than the run.
 
-    `live` is a broadcast, whose captions are reloaded as they are made:
-    mpv answers every reload by logging its whole track list - four lines
-    of terminal between the captions, every chunk - so playback's own
-    informational logging is turned down for one. Only that module: turning
-    every module down (`all=warn`) takes the terminal's subtitles with it,
-    and warnings and errors show either way.
+    `live` is a broadcast: its formats are muxed, so the sound is what the
+    cheapest one carries.
+
+    `reloading` is any item whose captions arrive while it plays - a
+    broadcast's, or a file being heard: mpv answers every reload by logging
+    its whole track list - four lines of terminal between the captions -
+    so playback's own informational logging is turned down for one. Only
+    that module: turning every module down (`all=warn`) takes the
+    terminal's subtitles with it, and warnings and errors show either way.
     """
 
     mpv = mpv_path()
@@ -835,7 +866,7 @@ def play_with_mpv(
             "--cache=yes",
         ]
 
-        if live:
+        if live or reloading:
 
             command.append(
                 "--msg-level=cplayer=warn"
@@ -925,6 +956,7 @@ def play_window(
     subtitles: PendingSubtitles | None = None,
     streams: Streams | None = None,
     live: bool = False,
+    reloading: bool = False,
 ) -> int:
     """
     Play video in an mpv window, with the subtitles we produced.
@@ -978,7 +1010,7 @@ def play_window(
             "--force-window=yes",
         ]
 
-        if live:
+        if live or reloading:
 
             command.append(
                 "--msg-level=cplayer=warn"

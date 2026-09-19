@@ -17,6 +17,8 @@ from .media import acquire, download_audio, find_cached_audio, sanitize_filename
 from .player import Positions, play_window, play_with_mpv
 from .sources import Media, Source, default, detect
 from .subtitles import (
+    GrowingCaptions,
+    HeardWhilePlaying,
     PendingSubtitles,
     Prepared,
     cache_stem,
@@ -838,11 +840,17 @@ def prepare_item(
     media: Media,
     args: argparse.Namespace,
     saved_path: Path | None,
-) -> Prepared | LiveCaptions | None:
+    playing: bool = False,
+) -> Prepared | GrowingCaptions | None:
     """
     Subtitles for one item, fetching audio only when they are generated
     locally: a broadcast is transcribed as it plays instead, which is a job
     rather than a file.
+
+    `playing` says the run is about to show them, which is what lets a file
+    be heard while it is watched (`HeardWhilePlaying`): the cues are written
+    as the model produces them and the player reloads them, where a run that
+    plays nothing waits for the whole transcript.
     """
 
     if not wants_subtitles(media, args):
@@ -855,30 +863,101 @@ def prepare_item(
             args,
         )
 
-    audio_path = saved_path
+    audio = captions_audio(
+        media,
+        args,
+        saved_path,
+    )
 
-    if (
-        audio_path is None
-        and needs_audio(media, args.subs_from)
-        and not has_transcript(media)
-    ):
+    if playing and audio is not None and hears_the_audio(media, args):
 
-        print(
-            "    Downloading audio for transcription:",
-            flush=True,
-        )
-
-        audio_path = acquire(
+        return HeardWhilePlaying(
             media,
-            cache_dir(media.source) / media.key,
+            audio,
+            args.whisper_model,
+            args.whisper_device,
         )
 
     return prepare(
         media,
-        audio_path,
+        audio,
         args.whisper_model,
         args.whisper_device,
         args.subs_from,
+    )
+
+
+def hears_the_audio(
+    media: Media,
+    args: argparse.Namespace,
+) -> bool:
+    """
+    Whether this run hears the audio rather than using captions a site
+    publishes, or a transcript the cache already holds.
+
+    It is the one case whose captions can be written while it plays: there
+    is no track to fetch and nothing on disk to read, so the model is all
+    that stands between the run and its subtitles. A page mpv resolves for
+    itself is excluded - there the audio is still being fetched while the
+    picture plays, so there is nothing to hear ahead of it.
+    """
+
+    return (
+        not media.stream
+        and wants_subtitles(media, args)
+        and needs_audio(
+            media,
+            args.subs_from,
+        )
+        and not has_transcript(media)
+    )
+
+
+def captions_audio(
+    media: Media,
+    args: argparse.Namespace,
+    saved_path: Path | None,
+) -> Path | None:
+    """
+    The audio a transcript for this item is made from, fetched if it is not
+    here yet: the file --save wrote, the one a previous run left in the
+    cache, or a download now.
+
+    Only what a transcript needs is asked for. An item whose captions the
+    source already publishes is transcribed from nothing, and one whose
+    transcript is cached is not heard again, so neither fetches anything.
+
+    This is the one part of preparing that happens before playback, because
+    the audio is what plays: whatever a site serves on a second fetch -
+    RTÉ's ads, and Bloomberg's, stitched in per request - the captions
+    belong to the copy the run itself downloaded (`playback_url`).
+    """
+
+    if saved_path is not None:
+
+        return saved_path
+
+    if not needs_audio(media, args.subs_from) or has_transcript(media):
+
+        return None
+
+    cached = find_cached_audio(
+        cache_dir(media.source),
+        media.key,
+    )
+
+    if cached is not None:
+
+        return cached
+
+    print(
+        "    Downloading audio for transcription:",
+        flush=True,
+    )
+
+    return acquire(
+        media,
+        cache_dir(media.source) / media.key,
     )
 
 
@@ -929,7 +1008,7 @@ def stop_captions(
         else subtitles.wait()
     )
 
-    if isinstance(settled, LiveCaptions):
+    if isinstance(settled, GrowingCaptions):
 
         settled.stop()
 
@@ -999,6 +1078,7 @@ def start_preparation(
     args: argparse.Namespace,
     saved_path: Path | None,
     after: PendingSubtitles | None = None,
+    media: Media | None = None,
 ) -> PendingSubtitles:
     """
     Resolve and prepare an item beside the playback that is already going.
@@ -1010,6 +1090,11 @@ def start_preparation(
     `after` is the preparation this one waits for before starting, which is
     how the item after the one playing is worked out without two of them
     asking YouTube at once.
+
+    `media` is an item the run has already resolved, and whose audio it has
+    already fetched (`captions_audio`), because that audio is what plays.
+    The resolve is not asked for again: only the transcript is left to
+    happen beside the playback.
     """
 
     def work() -> Prepared | LiveCaptions | None:
@@ -1018,19 +1103,24 @@ def start_preparation(
 
             after.wait()
 
-        media = resolve_item(
-            source,
-            item,
+        resolved = (
+            media
+            if media is not None
+            else resolve_item(
+                source,
+                item,
+            )
         )
 
-        if not wants_subtitles(media, args):
+        if not wants_subtitles(resolved, args):
 
             return None
 
         return prepare_item(
-            media,
+            resolved,
             args,
             saved_path,
+            playing=True,
         )
 
     job = PendingSubtitles(
@@ -1152,6 +1242,10 @@ def play_item(
 
     audio = media.is_audio or args.audio_only
 
+    # Captions made while the item plays are handed over as they land, and
+    # mpv logs its whole track list every time it reads the file again.
+    reloading = hears_the_audio(media, args)
+
     streams = meta.streams(
         media,
         None if audio else args.quality,
@@ -1186,6 +1280,7 @@ def play_item(
             subtitles=subtitles,
             streams=streams,
             live=media.live,
+            reloading=reloading,
         )
 
     return play_window(
@@ -1198,6 +1293,7 @@ def play_item(
         subtitles=subtitles,
         streams=streams,
         live=media.live,
+        reloading=reloading,
     )
 
 
@@ -1414,11 +1510,34 @@ def main() -> int:
 
             if not beside:
 
-                subtitles = ready_subtitles(
-                    media,
-                    args,
-                    saved_path,
-                )
+                if watching and wants_subtitles(media, args):
+
+                    # What the captions are timed against is the audio, so
+                    # the audio is fetched before the first frame. The
+                    # transcript is not: it is made while the item plays and
+                    # attached when it lands, which is what a source mpv
+                    # resolves for itself already does.
+                    captions_audio(
+                        media,
+                        args,
+                        saved_path,
+                    )
+
+                    subtitles = start_preparation(
+                        target.source,
+                        item,
+                        args,
+                        saved_path=saved_path,
+                        media=media,
+                    )
+
+                else:
+
+                    subtitles = ready_subtitles(
+                        media,
+                        args,
+                        saved_path,
+                    )
 
             if not watching:
 
