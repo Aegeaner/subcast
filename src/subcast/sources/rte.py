@@ -5,14 +5,15 @@ from __future__ import annotations
 import json
 import re
 import sys
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import requests
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
-from .media import sanitize_filename
-from .segments import clip_start_from_title
+from ..media import sanitize_filename
+from ..segments import clip_start_from_title
+from . import Media, Segment
 
 
 SHOW_URL = (
@@ -933,3 +934,188 @@ def episode_key(
         ).replace(" ", "_")
 
     return key
+
+
+def find_episodes(
+    show_html: str,
+    limit: int | None = None,
+) -> list[tuple[str, str]]:
+    """
+    Episode URLs on a show page, newest first, as (url, listing title).
+    """
+
+    soup = BeautifulSoup(
+        show_html,
+        "html.parser",
+    )
+
+    episodes: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    for anchor in soup.find_all(
+        "a",
+        href=True,
+    ):
+
+        absolute = urljoin(
+            SHOW_URL,
+            anchor["href"].strip(),
+        ).rstrip("/")
+
+        if absolute in seen:
+            continue
+
+        if not EPISODE_RE.search(absolute):
+            continue
+
+        seen.add(absolute)
+
+        episodes.append(
+            (
+                absolute + "/",
+                anchor.get_text(
+                    " ",
+                    strip=True,
+                ),
+            )
+        )
+
+        if limit and len(episodes) >= limit:
+            break
+
+    return episodes
+
+
+def episode_duration(
+    episode_html: str,
+) -> float | None:
+    """
+    The duration RTÉ states for an episode, in seconds.
+    """
+
+    match = re.search(
+        r'<meta\s+name="duration"\s+content="(\d+)"',
+        episode_html,
+    )
+
+    if not match:
+        return None
+
+    return int(match.group(1)) / 1000.0
+
+
+class Rte:
+    """
+    RTÉ Radio 1's Morning Ireland.
+
+    Listing is one request; resolving an episode means reading its page
+    and then driving the RTÉ player in a headless browser to find the
+    audio the player itself would stream.
+    """
+
+    name = "rte"
+
+    def matches(
+        self,
+        url: str,
+    ) -> bool:
+
+        host = urlsplit(url).netloc.lower()
+
+        return host == "rte.ie" or host.endswith(".rte.ie")
+
+    def episodes(
+        self,
+        url: str,
+        limit: int | None = None,
+    ) -> list[Media]:
+
+        target = url or SHOW_URL
+
+        if EPISODE_RE.search(target.rstrip("/")):
+
+            return [
+                Media(
+                    source=self.name,
+                    key=episode_key(target, ""),
+                    title="Morning Ireland",
+                    url=target,
+                    kind="audio",
+                )
+            ]
+
+        session = requests.Session()
+
+        listing = http_get(
+            session,
+            target,
+        )
+
+        return [
+            Media(
+                source=self.name,
+                key=episode_key(episode_url, listing_title),
+                title=listing_title or "Morning Ireland",
+                url=episode_url,
+                kind="audio",
+            )
+            for episode_url, listing_title in find_episodes(
+                listing.text,
+                limit,
+            )
+        ]
+
+    def resolve(
+        self,
+        media: Media,
+    ) -> Media:
+
+        session = requests.Session()
+
+        episode = http_get(
+            session,
+            media.url,
+            referer=SHOW_URL,
+        )
+
+        title = extract_episode_title(
+            episode.text,
+            media.title,
+        )
+
+        iframe_url = find_dustin_iframe(
+            episode.text,
+            media.url,
+        )
+
+        stream_url = verify_audio(
+            resolve_audio(iframe_url),
+            media.url,
+        )
+
+        return Media(
+            source=self.name,
+            key=media.key,
+            title=title,
+            url=stream_url,
+            kind="audio",
+            duration=episode_duration(episode.text),
+            referer=media.url,
+            headers=tuple(
+                media_headers(media.url).items()
+            ),
+            stream=False,
+            captions=(),
+            segments=tuple(
+                Segment(
+                    title=clip_title,
+                    duration=clip_duration,
+                )
+                for clip_title, clip_duration in find_episode_clips(
+                    episode.text
+                )
+            ),
+        )
+
+
+SOURCE = Rte()

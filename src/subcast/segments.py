@@ -168,6 +168,64 @@ def build_segments(
 
     return segments
 
+def place(
+    segments,
+    duration: float,
+) -> tuple[list[tuple[float, float, str]], bool]:
+    """
+    Put published segments on the timeline.
+
+    Sources that publish start times (YouTube chapters) are taken at their
+    word and need no aligning; sources that publish only lengths (RTÉ's
+    clip list) are packed and later snapped onto the transcript.
+
+    Returns the placed segments as (start, end, title) and whether their
+    starts are exact.
+    """
+
+    if any(segment.start is not None for segment in segments):
+
+        ordered = sorted(
+            segments,
+            key=lambda segment: segment.start or 0.0,
+        )
+
+        placed: list[tuple[float, float, str]] = []
+
+        for index, segment in enumerate(ordered):
+
+            start = float(segment.start or 0.0)
+
+            if index + 1 < len(ordered):
+                end = float(ordered[index + 1].start or start)
+
+            elif segment.duration:
+                end = start + segment.duration
+
+            else:
+                end = max(duration, start)
+
+            placed.append(
+                (
+                    start,
+                    max(end, start + 1.0),
+                    segment.title,
+                )
+            )
+
+        return placed, True
+
+    clips = [
+        (
+            segment.title,
+            segment.duration or 0.0,
+        )
+        for segment in segments
+    ]
+
+    return build_segments(clips, duration), False
+
+
 def segment_keywords(
     title: str,
 ) -> list[str]:

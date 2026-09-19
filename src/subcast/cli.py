@@ -4,48 +4,18 @@ from __future__ import annotations
 
 import argparse
 import sys
-
-import requests
+from pathlib import Path
 
 from . import captionbar
-from .config import (
-    CACHE_DIR,
-    DEFAULT_WHISPER_MODEL,
-    SAVE_DIR,
+from .config import DEFAULT_WHISPER_MODEL, cache_dir, save_dir
+from .media import acquire, download_audio, sanitize_filename
+from .player import play_window, play_with_mpv
+from .sources import Media, Source, default, detect
+from .subtitles import (
+    Prepared,
+    has_transcript,
+    prepare,
 )
-from .media import (
-    download_audio,
-    find_cached_audio,
-    sanitize_filename,
-)
-from .player import play_with_mpv
-from .rte import (
-    HEADERS,
-    SHOW_URL,
-    episode_key,
-    extract_episode_title,
-    find_dustin_iframe,
-    find_episode_clips,
-    find_latest_episode,
-    http_get,
-    media_headers,
-    resolve_audio,
-    verify_audio,
-)
-from .subtitles import prepare_subtitles
-
-def caption_scale(
-    args: argparse.Namespace,
-) -> int | None:
-    """
-    Requested caption size multiplier, or None to size captions to the
-    window.
-    """
-
-    if args.subs_scale == "auto":
-        return None
-
-    return int(args.subs_scale)
 
 
 def caption_style(
@@ -62,22 +32,95 @@ def caption_style(
     return "bar" if sys.stdout.isatty() else "osd"
 
 
+def caption_scale(
+    args: argparse.Namespace,
+) -> int | None:
+    """
+    Requested caption size multiplier, or None to size captions to the
+    window.
+    """
+
+    if args.subs_scale == "auto":
+        return None
+
+    return int(args.subs_scale)
+
+
 def parse_args() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Find the latest RTÉ Morning Ireland episode "
-            "and play or save its audio."
+            "Play or save an episode with subtitles: generated locally "
+            "when the source publishes none, and shown as they play. "
+            "Give it a URL (YouTube video, playlist or channel, or an "
+            "RTÉ Morning Ireland episode or show page) or nothing at all "
+            "for the latest Morning Ireland."
         )
+    )
+
+    parser.add_argument(
+        "url",
+        nargs="?",
+        default="",
+        help=(
+            "YouTube video, playlist or channel URL, or an RTÉ "
+            "Morning Ireland show or episode URL. Omit for the latest "
+            "Morning Ireland."
+        ),
+    )
+
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List what the URL points at and exit.",
+    )
+
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "How many entries of a playlist or show listing to play, "
+            "newest first (default: 1, 0 means all)."
+        ),
     )
 
     parser.add_argument(
         "--save",
         action="store_true",
         help=(
-            "Save the episode to "
-            "~/Videos/MorningIreland/ "
-            "instead of playing it."
+            "Download into ~/Videos/<source>/ instead of streaming, "
+            "then stop (add --subs to keep subtitles alongside)."
+        ),
+    )
+
+    parser.add_argument(
+        "--no-play",
+        action="store_true",
+        help=(
+            "Prepare everything but do not start mpv; prints what was "
+            "written."
+        ),
+    )
+
+    parser.add_argument(
+        "--audio-only",
+        action="store_true",
+        help=(
+            "Play the audio with captions in the terminal, instead of "
+            "video in an mpv window."
+        ),
+    )
+
+    parser.add_argument(
+        "--quality",
+        type=int,
+        default=1080,
+        metavar="HEIGHT",
+        help=(
+            "Maximum video height for streaming and --save "
+            "(default: 1080)."
         ),
     )
 
@@ -87,9 +130,19 @@ def parse_args() -> argparse.Namespace:
         dest="subs",
         action="store_true",
         help=(
-            "Transcribe the episode with Whisper and show the "
-            "subtitles, with the published segment titles, in the "
-            "terminal."
+            "Produce subtitles: published captions where the source has "
+            "them, otherwise a local Whisper transcription."
+        ),
+    )
+
+    parser.add_argument(
+        "--subs-from",
+        choices=("auto", "published", "asr"),
+        default="auto",
+        help=(
+            "Where subtitles come from: the source's own captions, "
+            "local speech recognition, or whichever is available "
+            "(default: auto)."
         ),
     )
 
@@ -98,7 +151,7 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_WHISPER_MODEL,
         metavar="MODEL",
         help=(
-            "faster-whisper model used by --subs "
+            "faster-whisper model used for transcription "
             f"(default: {DEFAULT_WHISPER_MODEL})."
         ),
     )
@@ -108,8 +161,7 @@ def parse_args() -> argparse.Namespace:
         choices=("auto", "cuda", "cpu"),
         default="auto",
         help=(
-            "Device used by --subs to run Whisper "
-            "(default: auto)."
+            "Device used to run Whisper (default: auto)."
         ),
     )
 
@@ -141,302 +193,344 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
+
+def source_for(
+    url: str,
+) -> Source:
+    """
+    The source that handles a URL, or the default one.
+    """
+
+    if not url:
+        return default()
+
+    return detect(url)
+
+
+def collect(
+    source: Source,
+    url: str,
+    limit: int,
+) -> list[Media]:
+    """
+    What the URL points at: one item, or many for a playlist or listing.
+    """
+
+    items = source.episodes(
+        url,
+        limit=limit or None,
+    )
+
+    if not items:
+
+        raise RuntimeError(
+            f"{source.name} returned nothing for "
+            f"{url or 'the default listing'}"
+        )
+
+    return items
+
+
+def format_duration(
+    seconds: float | None,
+) -> str:
+    """
+    A duration the way a listener reads it: 0:19, 4:07, 2:00:35.
+    """
+
+    if not seconds:
+        return ""
+
+    total = int(seconds)
+
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+
+    return f"{minutes}:{secs:02d}"
+
+
+def show_listing(
+    source: Source,
+    items: list[Media],
+) -> None:
+
+    print(
+        f"{source.name}: {len(items)} item(s)"
+    )
+
+    for index, item in enumerate(items, start=1):
+
+        duration = format_duration(
+            item.duration
+        )
+
+        print(
+            f"  {index:>3}. {item.title}"
+            + (f"  [{duration}]" if duration else "")
+        )
+
+
+def save_media(
+    media: Media,
+    quality: int,
+) -> Path:
+    """
+    Download a media item into its source's directory.
+    """
+
+    stem = save_dir(
+        media.source
+    ) / sanitize_filename(media.title)
+
+    if media.stream:
+
+        from .sources import youtube
+
+        return youtube.media_download(
+            media.url,
+            stem,
+            quality=quality,
+        )
+
+    return download_audio(
+        media.url,
+        stem,
+        dict(media.headers),
+    )
+
+
+def prepare_item(
+    media: Media,
+    args: argparse.Namespace,
+    saved_path: Path | None,
+) -> Prepared | None:
+    """
+    Subtitles for one item, fetching audio only when they are generated
+    locally.
+    """
+
+    if not args.subs:
+        return None
+
+    audio_path = saved_path
+
+    if (
+        audio_path is None
+        and needs_audio(media, args.subs_from)
+        and not has_transcript(media)
+    ):
+
+        print(
+            "    Downloading audio for transcription:",
+            flush=True,
+        )
+
+        audio_path = acquire(
+            media,
+            cache_dir(media.source) / media.key,
+        )
+
+    return prepare(
+        media,
+        audio_path,
+        args.whisper_model,
+        args.whisper_device,
+        args.subs_from,
+    )
+
+
+def needs_audio(
+    media: Media,
+    subs_from: str,
+) -> bool:
+    """
+    Whether subtitles will need the audio locally.
+    """
+
+    if subs_from == "published":
+        return False
+
+    if subs_from == "asr":
+        return True
+
+    return not media.captions
+
+
+def play_item(
+    media: Media,
+    prepared: Prepared | None,
+    args: argparse.Namespace,
+) -> int:
+    """
+    Audio in the terminal with our captions, video in an mpv window.
+    """
+
+    if media.is_audio or args.audio_only:
+
+        if prepared is not None and caption_style(args) == "bar":
+
+            return captionbar.play(
+                media.url,
+                prepared.cues,
+                prepared.segments,
+                prepared.chapters_path,
+                caption_scale(args),
+                warn_about_scale=args.subs_scale != "auto",
+                stream=media.stream,
+            )
+
+        return play_with_mpv(
+            media.url,
+            prepared.srt_path if prepared else None,
+            prepared.chapters_path if prepared else None,
+            stream=media.stream,
+        )
+
+    return play_window(
+        media.url,
+        prepared.srt_path if prepared else None,
+        prepared.chapters_path if prepared else None,
+        quality=args.quality,
+        stream=media.stream,
+    )
+
+
 def main() -> int:
 
     args = parse_args()
 
-    # --subs adds a preparation step in front of playback.
-    steps = (
-        6
-        if args.subs and not args.save
-        else 5
-    )
-
-    session = requests.Session()
-    session.headers.update(
-        HEADERS
-    )
-
     try:
 
-        # ============================================================
-        # Show page
-        # ============================================================
+        source = source_for(args.url)
 
         print(
-            f"[1/{steps}] Fetching show page:",
+            f"[1/3] Finding items ({source.name}):",
             flush=True,
         )
 
-        show_response = http_get(
-            session,
-            SHOW_URL,
+        items = collect(
+            source,
+            args.url,
+            args.limit,
         )
 
         print(
-            f"    {SHOW_URL}",
+            f"    {args.url or 'latest'}"
+        )
+
+        print(
+            f"    {len(items)} item(s)",
             flush=True,
         )
 
-        # ============================================================
-        # Find latest episode
-        # ============================================================
+        if args.list:
 
-        print(
-            f"\n[2/{steps}] Finding latest episode:",
-            flush=True,
-        )
+            show_listing(source, items)
 
-        episode_url, listing_title = (
-            find_latest_episode(
-                show_response.text
-            )
-        )
-
-        print(
-            f"    List title: {listing_title}",
-            flush=True,
-        )
-
-        print(
-            f"    URL: {episode_url}",
-            flush=True,
-        )
-
-        # ============================================================
-        # Fetch episode page
-        # ============================================================
-
-        print(
-            f"\n[3/{steps}] Fetching episode page:",
-            flush=True,
-        )
-
-        episode_response = http_get(
-            session,
-            episode_url,
-            referer=SHOW_URL,
-        )
-
-        # IMPORTANT:
-        # Get the real title from the concrete episode page.
-        title = extract_episode_title(
-            episode_response.text,
-            listing_title,
-        )
-
-        print(
-            f"    Episode title: {title}",
-            flush=True,
-        )
-
-        iframe_url = find_dustin_iframe(
-            episode_response.text,
-            episode_url,
-        )
-
-        print(
-            f"    Player: {iframe_url}",
-            flush=True,
-        )
-
-        # ============================================================
-        # Resolve actual media URL
-        # ============================================================
-
-        print(
-            f"\n[4/{steps}] Resolving actual media URL:",
-            flush=True,
-        )
-
-        media_url = resolve_audio(
-            iframe_url,
-        )
-
-        print()
-        print(
-            "    Captured media URL:"
-        )
-        print(
-            f"    {media_url}",
-            flush=True,
-        )
-
-        print(
-            "\n    Verifying media endpoint:",
-            flush=True,
-        )
-
-        media_url = verify_audio(
-            media_url,
-            episode_url,
-        )
-
-        print(
-            "    Final media URL:"
-        )
-        print(
-            f"    {media_url}",
-            flush=True,
-        )
-
-        # ============================================================
-        # Save OR play
-        # ============================================================
-
-        if args.save:
-
-            print(
-                f"\n[5/{steps}] Saving audio:",
-                flush=True,
-            )
-
-            print()
-            print(
-                f"    Save directory: {SAVE_DIR}",
-                flush=True,
-            )
-
-            saved_path = download_audio(
-                media_url,
-                SAVE_DIR
-                / sanitize_filename(title),
-                media_headers(episode_url),
-            )
-
-            print()
-            print(
-                "Download complete.",
-                flush=True,
-            )
-
-            print(
-                f"    {saved_path}",
-                flush=True,
-            )
-
-            if args.subs:
-
-                print(
-                    "\n    Generating subtitles:",
-                    flush=True,
-                )
-
-                prepared = prepare_subtitles(
-                    saved_path,
-                    find_episode_clips(
-                        episode_response.text
-                    ),
-                    title,
-                    args.whisper_model,
-                    args.whisper_device,
-                )
-
-                print(
-                    f"    {prepared.srt_path}",
-                    flush=True,
-                )
-
-                if prepared.chapters_path is not None:
-                    print(
-                        f"    {prepared.chapters_path}",
-                        flush=True,
-                    )
-
-            # --save = download only.
-            # Do NOT start mpv.
             return 0
 
-        if args.subs:
+        for index, item in enumerate(items, start=1):
+
+            position = (
+                f" ({index}/{len(items)})"
+                if len(items) > 1
+                else ""
+            )
 
             print(
-                f"\n[5/{steps}] Preparing subtitles:",
+                f"\n[2/3] Preparing{position}:",
                 flush=True,
             )
 
-            audio_path = find_cached_audio(
-                CACHE_DIR,
-                episode_key(
-                    episode_url,
-                    title,
-                ),
+            media = source.resolve(item)
+
+            print(
+                f"    {media.title}"
             )
 
-            if audio_path is None:
+            if media.duration:
 
                 print(
-                    f"    Cache directory: {CACHE_DIR}",
-                    flush=True,
+                    f"    Duration: "
+                    f"{format_duration(media.duration)}"
                 )
 
-                audio_path = download_audio(
-                    media_url,
-                    CACHE_DIR
-                    / episode_key(
-                        episode_url,
-                        title,
-                    ),
-                    media_headers(episode_url),
+            if media.captions:
+
+                print(
+                    f"    Published captions: "
+                    f"{media.captions[0].language}"
                 )
 
-            clips = find_episode_clips(
-                episode_response.text
-            )
-
-            if clips:
+            if media.segments:
 
                 print(
                     f"    Published segments: "
-                    f"{len(clips)}",
-                    flush=True,
+                    f"{len(media.segments)}"
                 )
 
-            else:
+            saved_path = None
+
+            if args.save:
 
                 print(
-                    "    No published segment list; "
-                    "subtitles only.",
+                    f"    Save directory: "
+                    f"{save_dir(media.source)}",
                     flush=True,
                 )
 
-            prepared = prepare_subtitles(
-                audio_path,
-                clips,
-                title,
-                args.whisper_model,
-                args.whisper_device,
+                saved_path = save_media(
+                    media,
+                    args.quality,
+                )
+
+                print(
+                    f"    Saved: {saved_path}",
+                    flush=True,
+                )
+
+            prepared = prepare_item(
+                media,
+                args,
+                saved_path,
             )
 
+            if (
+                prepared is not None
+                and prepared.chapters_path is not None
+            ):
+
+                print(
+                    f"    {prepared.chapters_path}",
+                    flush=True,
+                )
+
+            if args.no_play or args.save:
+
+                continue
+
             print(
-                f"\n[6/{steps}] Starting mpv...",
+                f"\n[3/3] Playing{position}:",
                 flush=True,
             )
 
-            if caption_style(args) == "bar":
-
-                return captionbar.play(
-                    audio_path,
-                    prepared.cues,
-                    prepared.segments,
-                    prepared.chapters_path,
-                    caption_scale(args),
-                    warn_about_scale=args.subs_scale != "auto",
-                )
-
-            return play_with_mpv(
-                audio_path,
-                prepared.srt_path,
-                prepared.chapters_path,
+            status = play_item(
+                media,
+                prepared,
+                args,
             )
 
-        print(
-            f"\n[5/{steps}] Starting mpv...",
-            flush=True,
-        )
+            if status != 0:
 
-        return play_with_mpv(
-            media_url,
-        )
+                print(
+                    f"    mpv exited with {status}",
+                    flush=True,
+                )
+
+        return 0
 
     except KeyboardInterrupt:
 
@@ -455,3 +549,9 @@ def main() -> int:
         )
 
         return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(
+        main()
+    )

@@ -41,6 +41,9 @@ dependencies = [
 
 [project.optional-dependencies]
 subs = ["faster-whisper>=1.0"]
+# The YouTube source drives the yt-dlp binary; installing it here just saves
+# having to install it separately (it is never imported).
+youtube = ["yt-dlp>=2024.1.1"]
 dev = [
     "build>=1.2",
     "pytest>=8",

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from subcast.rte import episode_key, find_episode_clips
+from subcast.sources.rte import (
+    episode_duration,
+    episode_key,
+    find_episode_clips,
+)
 
 
 FIXTURE = (
@@ -77,3 +81,14 @@ def test_cache_key_falls_back_to_the_title():
         "episodes/11812176/",
         "Morning Ireland",
     ) == "Morning_Ireland"
+
+
+def test_episode_duration_is_read_as_milliseconds():
+    # 7235000 is the value RTÉ serves for a 2:00:35 episode.
+    page = '<meta name="duration" content="7235000"/>'
+
+    assert episode_duration(page) == 7235.0
+
+
+def test_episode_duration_is_absent_when_the_page_omits_it():
+    assert episode_duration("<html><body>no duration</body></html>") is None

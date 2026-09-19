@@ -4,13 +4,35 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-09-19
 
-### Planned
+### Added
 
-- Source abstraction: local files, arbitrary URLs, and YouTube (videos and
-  playlists) alongside RTÉ, preferring published captions over transcription
-  when a source provides them.
+- **YouTube**: videos, playlists and channels, through `yt-dlp` (a URL works
+  with no extra flags: `subcast <url>`). Channels and `@handles` are
+  normalised to their `/videos` listing, `--list` shows what a URL points at,
+  and `--limit N` plays several entries in turn (`0` for all).
+- **Published captions win**: where a site already has subtitles (YouTube
+  usually does), they are downloaded and used instead of transcribing, so an
+  episode is ready in seconds with no GPU. `--subs-from asr` forces local
+  transcription, `--subs-from published` forbids it.
+- **YouTube chapters** become the segments, used exactly as published, so
+  nothing is guessed: the block shows the chapter you are in.
+- A `sources` layer: sources hand the pipeline a `Media` record (what to
+  play, which captions exist, which segments), so RTÉ and YouTube share
+  everything downstream.
+- `--save` downloads into `~/Videos/<source>/`; `--quality` caps the video
+  height; `--audio-only` plays a video's audio with captions in the terminal.
+- A caption line now lingers, dimmed, until the next one replaces it.
+- `subcast[youtube]` installs the `yt-dlp` binary for convenience.
+
+### Changed
+
+- Cached audio, transcripts and subtitles moved under `~/.cache/subcast/<source>/`,
+  and saved episodes under `~/Videos/<source>/`, so paths no longer assume
+  one show. Existing caches keep working if moved into those directories.
+- The CLI takes an optional URL instead of only talking to RTÉ; with no URL
+  it still plays the latest Morning Ireland.
 
 ## [0.1.0] - 2026-09-19
 
@@ -35,5 +57,6 @@ First release: RTÉ Morning Ireland only.
   re-transcription, plus `--save --subs` to keep audio, `.srt`,
   `.segments.json` and `.chapters.txt` together.
 
-[Unreleased]: https://github.com/Aegeaner/subcast/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Aegeaner/subcast/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Aegeaner/subcast/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Aegeaner/subcast/releases/tag/v0.1.0
