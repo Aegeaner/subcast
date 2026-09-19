@@ -1,0 +1,2 @@
+# Fixtures are test data, not the project's own HTML.
+tests/fixtures/*.html linguist-vendored

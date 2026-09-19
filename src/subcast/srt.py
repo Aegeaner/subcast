@@ -1,0 +1,251 @@
+"""SubRip subtitle writing."""
+
+from __future__ import annotations
+
+import json
+import textwrap
+from pathlib import Path
+
+
+# Columns per caption line: one terminal line, kept short enough to read
+# without moving your eyes across the screen.
+LINE_WIDTH = 42
+
+def srt_timestamp(
+    seconds: float,
+) -> str:
+    milliseconds = int(
+        round(seconds * 1000)
+    )
+
+    hours, milliseconds = divmod(
+        milliseconds,
+        3_600_000,
+    )
+
+    minutes, milliseconds = divmod(
+        milliseconds,
+        60_000,
+    )
+
+    whole, milliseconds = divmod(
+        milliseconds,
+        1000,
+    )
+
+    return (
+        f"{hours:02d}:{minutes:02d}:"
+        f"{whole:02d},{milliseconds:03d}"
+    )
+
+def split_cues(
+    cues: list[tuple[float, float, str]],
+    min_duration: float = 0.8,
+    width: int = LINE_WIDTH,
+    min_tail: int = 24,
+) -> list[tuple[float, float, str]]:
+    """
+    Keep every cue inside two terminal lines.
+
+    Whisper thinks in sentences, not captions: a single cue often runs to
+    three or four lines of terminal text, which reads as a wall. The cue
+    is laid out first, then cut at line boundaries, and its time is
+    shared out evenly, the way subtitle timing normally works.
+
+    Two things are avoided: a piece left with a couple of words (words
+    are pulled back from the previous piece until the tail reads as a
+    phrase again), and pieces too brief to read (a cue with too little
+    time to split is left whole rather than blinking in and out).
+    """
+
+    fitted: list[tuple[float, float, str]] = []
+
+    for start, end, text in cues:
+
+        lines = textwrap.wrap(
+            " ".join(text.split()),
+            width=width,
+        )
+
+        if not lines:
+            continue
+
+        if len(lines) <= 2:
+
+            fitted.append((start, end, " ".join(lines)))
+            continue
+
+        chunks = [
+            " ".join(lines[index:index + 2])
+            for index in range(0, len(lines), 2)
+        ]
+
+        while (
+            len(chunks) > 1
+            and len(chunks[-1]) < min_tail
+        ):
+
+            head, _, word = chunks[-2].rpartition(" ")
+
+            if not head:
+                break
+
+            candidate = word + " " + chunks[-1]
+
+            if len(textwrap.wrap(candidate, width=width)) > 2:
+                break
+
+            chunks[-2] = head
+            chunks[-1] = candidate
+
+        span = max(end - start, 0.0)
+
+        if span / len(chunks) < min_duration:
+
+            fitted.append((start, end, " ".join(lines)))
+            continue
+
+        # Equal shares, not shares by text length: pieces are two lines
+        # each, so they carry similar text anyway, and weighing by length
+        # starves the short trailing piece (a cue that flashes for a
+        # tenth of a second).
+        piece_span = span / len(chunks)
+        cursor = start
+
+        for index, chunk in enumerate(chunks):
+
+            piece_end = (
+                end
+                if index == len(chunks) - 1
+                else cursor + piece_span
+            )
+
+            fitted.append(
+                (
+                    cursor,
+                    piece_end,
+                    chunk,
+                )
+            )
+
+            cursor = piece_end
+
+    return fitted
+
+
+def save_cues(
+    cues: list[tuple[float, float, str]],
+    path: Path,
+) -> Path:
+    """
+    Cache the transcript, so captions can be re-rendered (and re-timed)
+    later without running Whisper over the episode again.
+    """
+
+    temp_path = path.with_name(
+        path.name + ".part"
+    )
+
+    temp_path.write_text(
+        json.dumps(
+            [
+                {
+                    "start": round(start, 3),
+                    "end": round(end, 3),
+                    "text": text,
+                }
+                for start, end, text in cues
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    temp_path.replace(path)
+
+    return path
+
+
+def load_cues(
+    path: Path,
+) -> list[tuple[float, float, str]]:
+    """
+    Transcript cached by save_cues, or an empty list.
+    """
+
+    try:
+        raw = json.loads(
+            path.read_text(
+                encoding="utf-8"
+            )
+        )
+
+    except (OSError, ValueError):
+        return []
+
+    if not isinstance(raw, list):
+        return []
+
+    cues: list[tuple[float, float, str]] = []
+
+    for item in raw:
+
+        if not isinstance(item, dict):
+            return []
+
+        try:
+            cues.append(
+                (
+                    float(item["start"]),
+                    float(item["end"]),
+                    str(item["text"]),
+                )
+            )
+
+        except (KeyError, TypeError, ValueError):
+            return []
+
+    return cues
+
+
+def write_srt(
+    cues: list[tuple[float, float, str]],
+    path: Path,
+    width: int = LINE_WIDTH,
+) -> Path:
+    """
+    Write SRT cues. Segment titles are cues too, spanning their whole
+    segment, so they stay on screen above the dialogue while it plays.
+    """
+
+    blocks = []
+
+    for index, (start, end, text) in enumerate(
+        sorted(
+            cues,
+            key=lambda cue: cue[0],
+        ),
+        start=1,
+    ):
+
+        blocks.append(
+            f"{index}\n"
+            f"{srt_timestamp(start)} --> "
+            f"{srt_timestamp(end)}\n"
+            f"{textwrap.fill(text, width)}\n"
+        )
+
+    temp_path = path.with_name(
+        path.name + ".part"
+    )
+
+    temp_path.write_text(
+        "\n".join(blocks),
+        encoding="utf-8",
+    )
+
+    temp_path.replace(path)
+
+    return path

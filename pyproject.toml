@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "subcast"
+description = "Play or save the latest RTÉ Morning Ireland episode, with generated subtitles and segment titles."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+dynamic = ["version"]
+authors = [{ name = "The subcast authors" }]
+keywords = [
+    "rte",
+    "radio",
+    "podcast",
+    "mpv",
+    "whisper",
+    "subtitles",
+    "captions",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio :: Players",
+    "Topic :: Multimedia :: Video :: Display",
+]
+dependencies = [
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "playwright>=1.40",
+]
+
+[project.optional-dependencies]
+subs = ["faster-whisper>=1.0"]
+dev = [
+    "build>=1.2",
+    "pytest>=8",
+    "ruff>=0.6",
+    "twine>=5",
+]
+
+[project.scripts]
+subcast = "subcast.cli:main"
+
+[project.urls]
+Repository = "https://github.com/Aegeaner/subcast"
+Issues = "https://github.com/Aegeaner/subcast/issues"
+Changelog = "https://github.com/Aegeaner/subcast/blob/main/CHANGELOG.md"
+
+[tool.setuptools.dynamic]
+version = {attr = "subcast.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 88
