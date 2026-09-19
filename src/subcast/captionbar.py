@@ -30,6 +30,7 @@ from .player import (
     socket_directory,
     start_arguments,
 )
+from .subtitles import PendingSubtitles
 
 # Rows the block occupies: one title line, the previous line of dialogue,
 # up to two lines of what is being said now, and the playback clock. Kept
@@ -606,8 +607,7 @@ def draw(
 
 def play(
     url: Path,
-    cues: list[tuple[float, float, str]],
-    segments: list[tuple[float, float, str]],
+    subtitles: PendingSubtitles,
     chapters_path: Path | None = None,
     scale: int | None = None,
     warn_about_scale: bool = False,
@@ -618,15 +618,16 @@ def play(
     Play url through mpv with our own caption block. Returns mpv's exit
     status.
 
+    `subtitles` is the work being done for them: mpv starts first, so the
+    audio is already playing when the block is first drawn - the worker's
+    own lines are printed until then, which is the one time nothing is
+    drawing over them.
+
     `scale` is the caption size multiplier, or None to size the captions
     to the window (a wider window gets bigger captions, not ever longer
     lines). It needs a terminal that renders scaled text (kitty 0.40+) and
     is dropped back to 1 anywhere else. The width of the block always
     follows the window.
-
-    `positions` is where the item is remembered and picked up from; the
-    loop that draws the block is already polling mpv, so it writes the
-    position down as it goes.
     """
 
     if (
@@ -651,8 +652,7 @@ def play(
     return retry_load_error(
         lambda: _play_once(
             url,
-            cues,
-            segments,
+            subtitles,
             chapters_path,
             scale,
             stream,
@@ -663,8 +663,7 @@ def play(
 
 def _play_once(
     url: Path,
-    cues: list[tuple[float, float, str]],
-    segments: list[tuple[float, float, str]],
+    subtitles: PendingSubtitles,
     chapters_path: Path | None,
     scale: int,
     stream: bool,
@@ -736,8 +735,7 @@ def _play_once(
         return _follow(
             process,
             socket_path,
-            cues,
-            segments,
+            subtitles,
             scale,
             positions,
         )
@@ -758,11 +756,29 @@ def _play_once(
 def _follow(
     process: subprocess.Popen,
     socket_path: Path,
-    cues: list[tuple[float, float, str]],
-    segments: list[tuple[float, float, str]],
+    subtitles: PendingSubtitles,
     scale: int,
     positions: Positions | None = None,
 ) -> int:
+    """
+    Draw the block for as long as mpv plays.
+
+    The subtitles are waited for first: the block is pinned to the bottom
+    rows and the worker prints as it goes, so the two cannot share the
+    screen. Playback is already running by then - mpv started before the
+    wait - which is the part that matters.
+    """
+
+    prepared = subtitles.wait()
+
+    failure = subtitles.failure_message()
+
+    if failure is not None:
+
+        print(failure, flush=True)
+
+    cues = prepared.cues if prepared is not None else []
+    segments = prepared.segments if prepared is not None else []
 
     client = connect(
         socket_path

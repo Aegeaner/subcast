@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import threading
 import time
 from dataclasses import replace
+from pathlib import Path
+
+import pytest
 
 from subcast import cli, player
 from subcast.sources import Captions, Media
@@ -12,6 +16,22 @@ from subcast.sources import Captions, Media
 PUBLISHED = (
     Captions(language="en", url="https://example.test/en.vtt"),
 )
+
+PREPARED = cli.Prepared(
+    srt_path=Path("/tmp/example.srt"),
+    chapters_path=None,
+    cues=[],
+    segments=[],
+)
+
+
+class Source:
+    """A source whose resolve is whatever the test says it is."""
+
+    name = "youtube"
+
+    def resolve(self, media):
+        return media
 
 
 def args(
@@ -205,6 +225,91 @@ def test_an_item_whose_stream_url_we_must_find_is_resolved(monkeypatch):
 
     assert cli.resolve_item(Source(), item) is resolved
     assert saved == ["Resolved"]
+
+
+def test_a_source_mpv_resolves_plays_before_being_prepared():
+    """
+    A YouTube page URL is mpv's to resolve, so the run does not wait for
+    subcast's own resolve and transcript. RTÉ is the other way round: its
+    stream URL only comes out of the resolve.
+    """
+
+    assert cli.plays_while_preparing(media(), playing=True)
+    assert cli.plays_while_preparing(media(), playing=False) is False
+
+    audio = replace(media(), kind="audio", stream=False)
+
+    assert cli.plays_while_preparing(audio, playing=True) is False
+
+
+def test_the_preparation_runs_beside_playback(monkeypatch):
+    release = threading.Event()
+    resolved: list[str] = []
+
+    def resolve(source, item):
+        resolved.append(item.key)
+        return item
+
+    def prepare(media, args, saved):
+        release.wait(timeout=5)
+        return PREPARED
+
+    monkeypatch.setattr(cli, "resolve_item", resolve)
+    monkeypatch.setattr(cli, "prepare_item", prepare)
+    monkeypatch.setattr(cli, "wants_subtitles", lambda media, args: True)
+
+    job = cli.start_preparation(Source(), media(), args(), None)
+
+    # nothing is waited for: not the resolve, not the transcript
+    assert job.done_yet() is False
+
+    release.set()
+
+    assert job.wait() is PREPARED
+    assert resolved == ["abc"]
+
+
+def test_no_subtitles_wanted_means_no_preparation(monkeypatch):
+    monkeypatch.setattr(cli, "resolve_item", lambda source, item: item)
+    monkeypatch.setattr(cli, "wants_subtitles", lambda media, args: False)
+    monkeypatch.setattr(
+        cli,
+        "prepare_item",
+        lambda media, args, saved: pytest.fail("prepared anyway"),
+    )
+
+    assert cli.start_preparation(Source(), media(), args(), None).wait() is None
+    assert cli.ready_subtitles(media(), args(), None) is None
+
+
+def test_an_item_that_must_be_resolved_is_ready_before_playback(monkeypatch):
+    monkeypatch.setattr(cli, "wants_subtitles", lambda media, args: True)
+    monkeypatch.setattr(
+        cli,
+        "prepare_item",
+        lambda media, args, saved: PREPARED,
+    )
+
+    job = cli.ready_subtitles(media(), args(), None)
+
+    assert job is not None
+    assert job.done_yet() is True
+    assert job.wait() is PREPARED
+
+
+def test_chapters_come_from_what_a_previous_run_left(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        cli,
+        "cache_stem",
+        lambda media: tmp_path / media.key,
+    )
+
+    assert cli.chapters_for(media()) is None
+
+    chapters = tmp_path / "abc.chapters.txt"
+    chapters.write_text(";FFMETADATA1\n")
+
+    assert cli.chapters_for(media()) == chapters
 
 
 def test_playing_starts_where_the_item_was_left(

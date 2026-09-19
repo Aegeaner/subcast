@@ -13,6 +13,7 @@ from .media import acquire, download_audio, sanitize_filename
 from .player import Positions, play_window, play_with_mpv
 from .sources import Media, Source, default, detect
 from .subtitles import (
+    PendingSubtitles,
     Prepared,
     cache_stem,
     has_transcript,
@@ -760,10 +761,109 @@ def saved_positions(
     )
 
 
+def plays_while_preparing(
+    item: Media,
+    playing: bool,
+) -> bool:
+    """
+    Whether playback can start before this item is resolved and captioned.
+
+    Only where mpv resolves the URL itself (a page URL it hands to yt-dlp)
+    and only when something is actually being watched: RTÉ's stream URL
+    comes out of the resolve, and --no-play and --save are not waiting to
+    watch anything.
+    """
+
+    return playing and item.stream
+
+
+def start_preparation(
+    source: Source,
+    item: Media,
+    args: argparse.Namespace,
+    saved_path: Path | None,
+) -> PendingSubtitles:
+    """
+    Resolve and prepare an item beside the playback that is already going.
+
+    This is what makes a YouTube run start in seconds: the resolve (2-5s)
+    and the transcript are the only things subcast needs, and neither is
+    needed to play - mpv is handed the page URL and asks yt-dlp itself.
+    """
+
+    def work() -> Prepared | None:
+
+        media = resolve_item(
+            source,
+            item,
+        )
+
+        if not wants_subtitles(media, args):
+
+            return None
+
+        return prepare_item(
+            media,
+            args,
+            saved_path,
+        )
+
+    job = PendingSubtitles(
+        work
+    )
+
+    job.start()
+
+    return job
+
+
+def ready_subtitles(
+    media: Media,
+    args: argparse.Namespace,
+    saved_path: Path | None,
+) -> PendingSubtitles | None:
+    """
+    The subtitles for an item, worked out before playback starts.
+
+    None means none are wanted at all, which is also what a run with no
+    --subs gets from a source that publishes no captions.
+    """
+
+    if not wants_subtitles(media, args):
+
+        return None
+
+    return PendingSubtitles.done(
+        prepare_item(
+            media,
+            args,
+            saved_path,
+        )
+    )
+
+
+def chapters_for(
+    media: Media,
+) -> Path | None:
+    """
+    The chapter file a previous run left, if it did.
+
+    Chapters cannot be added to mpv once it is playing, so a run that
+    starts before its subtitles are ready uses the ones already on disk and
+    leaves this run's for next time.
+    """
+
+    path = cache_stem(media).with_suffix(
+        ".chapters.txt"
+    )
+
+    return path if path.is_file() else None
+
+
 def play_item(
     media: Media,
-    prepared: Prepared | None,
     args: argparse.Namespace,
+    subtitles: PendingSubtitles | None,
 ) -> int:
     """
     Audio in the terminal with our captions, video in an mpv window.
@@ -782,15 +882,18 @@ def play_item(
             flush=True,
         )
 
+    chapters = chapters_for(
+        media
+    )
+
     if media.is_audio or args.audio_only:
 
-        if prepared is not None and caption_style(args) == "bar":
+        if subtitles is not None and caption_style(args) == "bar":
 
             return captionbar.play(
                 media.url,
-                prepared.cues,
-                prepared.segments,
-                prepared.chapters_path,
+                subtitles,
+                chapters,
                 caption_scale(args),
                 warn_about_scale=args.subs_scale != "auto",
                 stream=media.stream,
@@ -799,19 +902,21 @@ def play_item(
 
         return play_with_mpv(
             media.url,
-            prepared.srt_path if prepared else None,
-            prepared.chapters_path if prepared else None,
+            None,
+            chapters,
             stream=media.stream,
             positions=positions,
+            subtitles=subtitles,
         )
 
     return play_window(
         media.url,
-        prepared.srt_path if prepared else None,
-        prepared.chapters_path if prepared else None,
+        None,
+        chapters,
         quality=args.quality,
         stream=media.stream,
         positions=positions,
+        subtitles=subtitles,
     )
 
 
@@ -891,10 +996,29 @@ def main() -> int:
                 flush=True,
             )
 
-            media = resolve_item(
-                target.source,
-                item,
-            )
+            watching = not (args.no_play or args.save)
+            ahead = plays_while_preparing(item, watching)
+
+            media = item
+            subtitles: PendingSubtitles | None = None
+
+            if ahead:
+
+                # The listing's own title and length are all playback
+                # needs; the resolve and the subtitles happen beside it.
+                subtitles = start_preparation(
+                    target.source,
+                    item,
+                    args,
+                    saved_path=None,
+                )
+
+            else:
+
+                media = resolve_item(
+                    target.source,
+                    item,
+                )
 
             print(
                 f"    {media.title}"
@@ -941,23 +1065,19 @@ def main() -> int:
                     flush=True,
                 )
 
-            prepared = prepare_item(
-                media,
-                args,
-                saved_path,
-            )
+            if not ahead:
 
-            if (
-                prepared is not None
-                and prepared.chapters_path is not None
-            ):
-
-                print(
-                    f"    {prepared.chapters_path}",
-                    flush=True,
+                subtitles = ready_subtitles(
+                    media,
+                    args,
+                    saved_path,
                 )
 
-            if args.no_play or args.save:
+            if not watching:
+
+                if subtitles is not None:
+
+                    subtitles.wait()
 
                 continue
 
@@ -968,8 +1088,8 @@ def main() -> int:
 
             status = play_item(
                 media,
-                prepared,
                 args,
+                subtitles,
             )
 
             if status != 0:

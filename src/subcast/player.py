@@ -11,9 +11,15 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from .subtitles import PendingSubtitles
+
 # How often where an item got to is written down. Often enough that a run
 # cut short costs seconds, rarely enough to leave the socket alone.
 SAVE_SECONDS = 5.0
+
+# How often to look while subtitles are still being prepared: the file is
+# usually seconds away, and attaching it late is worse than asking often.
+SUBTITLES_POLL_SECONDS = 0.5
 
 # Reaching within this much of the end counts as watched: resuming there
 # would start at the credits.
@@ -184,11 +190,48 @@ class Ipc:
         self.request_id = 0
 
     def get(self, name: str):
+        """
+        A property's value, or None when mpv has no answer to give - which
+        is what an unavailable property is, and what a dead socket is.
+        """
+
+        message = self._request(
+            ["get_property", name]
+        )
+
+        if message is None or "error" in message:
+
+            return None
+
+        return message.get("data")
+
+    def command(self, *command: str) -> str | None:
+        """
+        Run a command, returning what mpv said went wrong, or None.
+        """
+
+        message = self._request(
+            list(command)
+        )
+
+        if message is None:
+
+            return "mpv is not answering"
+
+        error = message.get("error")
+
+        if error in (None, "success"):
+
+            return None
+
+        return str(error)
+
+    def _request(self, command: list) -> dict | None:
 
         self.request_id += 1
 
         request = {
-            "command": ["get_property", name],
+            "command": command,
             "request_id": self.request_id,
         }
 
@@ -222,7 +265,7 @@ class Ipc:
                 message.get("request_id")
                 == self.request_id
             ):
-                return message.get("data")
+                return message
 
     def _read_line(self) -> str | None:
 
@@ -301,18 +344,21 @@ def socket_directory() -> Path:
 def run_mpv(
     command: list[str],
     positions: Positions | None = None,
+    subtitles: PendingSubtitles | None = None,
 ) -> int:
     """
-    Play through mpv, remembering where the item gets to.
+    Play through mpv, remembering where the item gets to and handing it the
+    subtitles once they are ready.
 
-    Without `positions` mpv is left entirely to itself, which is what
-    every caller did before resumes existed.
+    With neither, mpv is left entirely to itself, which is what every
+    caller did before resumes and background subtitles existed.
     """
 
     return retry_load_error(
         lambda: _run_once(
             command,
             positions,
+            subtitles,
         )
     )
 
@@ -320,9 +366,10 @@ def run_mpv(
 def _run_once(
     command: list[str],
     positions: Positions | None = None,
+    subtitles: PendingSubtitles | None = None,
 ) -> int:
 
-    if positions is None:
+    if positions is None and subtitles is None:
 
         return subprocess.run(
             command,
@@ -348,6 +395,7 @@ def _run_once(
             process,
             socket_path,
             positions,
+            subtitles,
         )
 
     finally:
@@ -363,14 +411,63 @@ def _run_once(
         )
 
 
+def attach_subtitles(
+    client: Ipc,
+    subtitles: PendingSubtitles,
+) -> bool:
+    """
+    Hand mpv the subtitles a job has finished, once. False means they are
+    still being worked out, and the caller should ask again.
+
+    mpv takes an external file mid-playback with `sub-add`, which is what
+    makes playing first possible at all: the file's own timings are what
+    they are, so the captions line up from the moment they arrive.
+    """
+
+    if not subtitles.done_yet():
+
+        return False
+
+    failure = subtitles.failure_message()
+
+    if failure is not None:
+
+        print(failure, flush=True)
+
+        return True
+
+    prepared = subtitles.prepared()
+
+    if prepared is None:
+
+        return True
+
+    problem = client.command(
+        "sub-add",
+        str(prepared.srt_path),
+        "select",
+    )
+
+    if problem is not None:
+
+        print(
+            f"    mpv would not take the subtitles ({problem}).",
+            flush=True,
+        )
+
+    return True
+
+
 def follow(
     process: subprocess.Popen,
     socket_path: Path,
-    positions: Positions,
+    positions: Positions | None,
+    subtitles: PendingSubtitles | None = None,
 ) -> int:
     """
     Write down where mpv is up to while it plays, so a run that ends
-    abruptly still resumes where it stopped.
+    abruptly still resumes where it stopped - and give mpv the subtitles
+    once they are ready.
     """
 
     client = connect(
@@ -380,6 +477,8 @@ def follow(
     if client is None:
         return process.wait()
 
+    waiting = subtitles is not None
+
     try:
 
         while process.poll() is None:
@@ -388,7 +487,7 @@ def follow(
                 "time-pos"
             )
 
-            if seconds is not None:
+            if positions is not None and seconds is not None:
 
                 positions.update(
                     float(seconds),
@@ -396,8 +495,24 @@ def follow(
                     bool(client.get("eof-reached")),
                 )
 
+            if waiting:
+
+                waiting = not attach_subtitles(
+                    client,
+                    subtitles,
+                )
+
             time.sleep(
-                SAVE_SECONDS
+                SUBTITLES_POLL_SECONDS
+                if waiting
+                else SAVE_SECONDS
+            )
+
+        if waiting:
+
+            attach_subtitles(
+                client,
+                subtitles,
             )
 
         return process.returncode
@@ -413,6 +528,7 @@ def play_with_mpv(
     chapters_path: Path | None = None,
     stream: bool = False,
     positions: Positions | None = None,
+    subtitles: PendingSubtitles | None = None,
 ) -> int:
 
     mpv = mpv_path()
@@ -448,14 +564,19 @@ def play_with_mpv(
             ]
         )
 
-    if subtitle_path is not None:
+    if subtitle_path is not None or subtitles is not None:
 
         command.extend(
             [
-                f"--sub-file={subtitle_path}",
+                *(
+                    [f"--sub-file={subtitle_path}"]
+                    if subtitle_path is not None
+                    else []
+                ),
 
                 # Print the subtitles in the terminal, and keep the
-                # status line quiet so it does not redraw them.
+                # status line quiet so it does not redraw them. This is
+                # set either way: a file added later is printed the same.
                 "--term-osd=force",
                 "--term-status-msg=",
             ]
@@ -474,6 +595,7 @@ def play_with_mpv(
     return run_mpv(
         command,
         positions,
+        subtitles,
     )
 
 
@@ -484,6 +606,7 @@ def play_window(
     quality: int = 1080,
     stream: bool = False,
     positions: Positions | None = None,
+    subtitles: PendingSubtitles | None = None,
 ) -> int:
     """
     Play video in an mpv window, with the subtitles we produced.
@@ -533,6 +656,14 @@ def play_window(
             ]
         )
 
+    elif subtitles is not None:
+
+        # Ours are on the way, so nothing else should take the screen in
+        # the meantime: the file is added with `sub-add` when it lands.
+        command.append(
+            "--sid=no"
+        )
+
     if chapters_path is not None:
 
         command.append(
@@ -546,4 +677,5 @@ def play_window(
     return run_mpv(
         command,
         positions,
+        subtitles,
     )

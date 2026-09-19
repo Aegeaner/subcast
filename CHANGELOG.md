@@ -56,6 +56,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Playback no longer waits for the subtitles. Where mpv resolves the
+  source's URL itself (YouTube), the resolve and the transcript now happen
+  beside the playback: mpv starts as soon as the listing says what to
+  play, and the subtitle file is handed to it mid-playback (`sub-add`)
+  when it lands. Measured on the video from the report: first frame at
+  ~9.4s cold against ~11.5s, ~3.5s on a replay against ~8s, with the
+  captions ready before the first frame in both. RTÉ, whose stream URL
+  only comes out of the resolve, and `--no-play`/`--save`, which are not
+  watching, prepare first exactly as before. A caption failure is now a
+  line printed during playback rather than the end of the run. mpv cannot
+  take chapters once it is playing, so a first play uses the chapter file
+  a previous run left.
 - Playing a video again no longer asks YouTube anything. What a resolve
   learned (title, length, when) is written beside the transcript, so a
   replay whose captions are cached skips both the resolve and the listing

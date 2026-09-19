@@ -147,6 +147,17 @@ terminal with captions transcribed locally and segment titles from RTÉ's
 clip list, while plain `subcast` plays the same audio with the segment
 titles alone.
 
+Playing a YouTube video does not wait for any of that. mpv is handed the
+page URL and asks yt-dlp for the stream itself, so the watch link and the
+cache are all the run needs to start: the resolve, the caption download
+and (where the video has no captions) the transcription all happen beside
+the playback, and the subtitle file is handed to mpv mid-playback the
+moment it is ready. A first play spends its time on the listing call and
+on mpv's own extraction — the two things that cannot be moved — and a
+replay spends it on mpv alone. RTÉ is different, and stays that way: its
+stream URL only comes out of the resolve, so that one is found before
+anything starts.
+
 For audio, captions are drawn by the tool itself in a fixed block at
 the bottom of the terminal: a dim cyan segment title, then the line that
 has just finished (dimmed, so you never lose the thread mid-sentence),
@@ -313,6 +324,11 @@ templates.
   the cache, so playing a video again asks YouTube nothing — the watch
   link and the cache name everything. The resolve is asked for again once
   the metadata is a month old, or when the title no longer matches.
+- Playing starts before the subtitles are ready, and mpv cannot take
+  chapters once it is playing, so a video's first play uses whatever
+  chapter file an earlier run left — the run that produces them also
+  plays without them. On the terminal bar the segment titles are drawn by
+  subcast itself and appear with the captions.
 - Stream URLs are signed and short-lived, and YouTube's edge answers 403
   on a freshly minted one now and then. A stream mpv cannot load is
   therefore fetched and tried once more (`mpv could not load that stream`)

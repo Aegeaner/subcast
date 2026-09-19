@@ -1,7 +1,8 @@
-"""Published captions, and what happens when the URL is not WebVTT."""
+"""The caption fallback, and subtitles worked out while playback runs."""
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,78 @@ VTT = """WEBVTT
 00:00:01.000 --> 00:00:03.000
 Good morning.
 """
+
+
+def prepared() -> subtitles.Prepared:
+    return subtitles.Prepared(
+        srt_path=Path("/tmp/example.srt"),
+        chapters_path=None,
+        cues=[(1.0, 3.0, "Good morning.")],
+        segments=[],
+    )
+
+
+def test_work_started_in_the_background_reports_when_it_is_done():
+    release = threading.Event()
+
+    def work():
+        release.wait(timeout=5)
+        return prepared()
+
+    job = subtitles.PendingSubtitles(work)
+    job.start()
+
+    assert job.done_yet() is False
+    assert job.prepared() is None
+
+    release.set()
+
+    assert job.wait() == prepared()
+    assert job.done_yet() is True
+
+
+def test_starting_twice_runs_the_work_once():
+    runs: list[int] = []
+
+    job = subtitles.PendingSubtitles(lambda: runs.append(1))
+    job.start()
+    job.start()
+
+    job.wait()
+
+    assert runs == [1]
+
+
+def test_a_job_that_finished_before_playback_is_ready_at_once():
+    job = subtitles.PendingSubtitles.done(prepared())
+
+    assert job.done_yet() is True
+    assert job.prepared() == prepared()
+
+
+def test_a_failure_is_carried_rather_than_raised():
+    """
+    Playback is already under way when this is noticed: a caption problem
+    is a line to print, not a reason to stop the video.
+    """
+
+    def work():
+        raise RuntimeError("the published captions were empty")
+
+    job = subtitles.PendingSubtitles(work)
+    job.start()
+
+    assert job.wait() is None
+    assert job.failure_message() == (
+        "    Subtitles failed: the published captions were empty; "
+        "playing without them."
+    )
+
+
+def test_a_job_that_worked_reports_no_failure():
+    job = subtitles.PendingSubtitles.done(prepared())
+
+    assert job.failure_message() is None
 
 
 def media() -> Media:

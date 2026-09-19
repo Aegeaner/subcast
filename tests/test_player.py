@@ -2,11 +2,93 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
 
 from subcast import player
+from subcast.subtitles import PendingSubtitles, Prepared
+
+
+class FakeClient:
+    """An mpv that only remembers what it was told."""
+
+    def __init__(self, problem: str | None = None) -> None:
+        self.commands: list[tuple[str, ...]] = []
+        self.problem = problem
+
+    def command(self, *command: str) -> str | None:
+        self.commands.append(command)
+        return self.problem
+
+
+def prepared() -> Prepared:
+    return Prepared(
+        srt_path=Path("/tmp/example.srt"),
+        chapters_path=None,
+        cues=[],
+        segments=[],
+    )
+
+
+def test_subtitles_that_are_not_ready_are_asked_about_again():
+    release = threading.Event()
+
+    def work():
+        release.wait(timeout=5)
+        return prepared()
+
+    job = PendingSubtitles(work)
+    job.start()
+
+    client = FakeClient()
+
+    assert player.attach_subtitles(client, job) is False
+    assert client.commands == []
+
+    release.set()
+    job.wait()
+
+    assert player.attach_subtitles(client, job) is True
+    assert client.commands == [
+        ("sub-add", "/tmp/example.srt", "select"),
+    ]
+
+
+def test_subtitles_that_are_ready_are_added_once():
+    job = PendingSubtitles.done(prepared())
+    client = FakeClient()
+
+    assert player.attach_subtitles(client, job) is True
+    assert player.attach_subtitles(client, job) is True
+
+    # the caller stops asking once this says so, but a second call is
+    # harmless: mpv replaces the track it was given
+    assert len(client.commands) == 2
+
+
+def test_a_failed_preparation_is_reported_not_retried(capsys):
+    def work():
+        raise RuntimeError("the published captions were empty")
+
+    job = PendingSubtitles(work)
+    job.start()
+    job.wait()
+
+    client = FakeClient()
+
+    assert player.attach_subtitles(client, job) is True
+    assert client.commands == []
+    assert "playing without them" in capsys.readouterr().out
+
+
+def test_mpv_refusing_the_file_is_said_out_loud(capsys):
+    job = PendingSubtitles.done(prepared())
+    client = FakeClient(problem="invalid parameter")
+
+    assert player.attach_subtitles(client, job) is True
+    assert "invalid parameter" in capsys.readouterr().out
 
 
 def test_a_stream_mpv_cannot_load_is_tried_once_more():
