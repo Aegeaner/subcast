@@ -18,6 +18,7 @@ from .segments import (
     save_segments,
     snap_segments,
 )
+from .sources import Captions
 from .srt import (
     load_cues,
     save_cues,
@@ -270,18 +271,22 @@ def has_transcript(
 
 
 def fetch_captions(
-    captions,
+    captions: tuple[Captions, ...],
     media=None,
     stem: Path | None = None,
     session: requests.Session | None = None,
 ) -> list[tuple[float, float, str]]:
     """
-    Get a subtitle track the source already publishes, as cues.
+    Get a subtitle track the source publishes, as cues.
 
-    The URL in a player's metadata is sometimes the WebVTT itself and
-    sometimes a playlist pointing at it; when the plain download does not
-    yield captions, the source gets a chance to fetch them its own way
-    (yt-dlp, for YouTube).
+    Each candidate is asked in turn - a translation YouTube may refuse is
+    followed by the track it was translated from - and only when none of
+    them answers does the source get a chance of its own (yt-dlp, for
+    YouTube), which costs a second extraction.
+
+    A refusal to serve the captions at all (HTTP 429) is reported as that,
+    rather than as captions that turned out to be empty: the difference is
+    whether trying again later is worth anything.
     """
 
     from . import sources
@@ -290,25 +295,36 @@ def fetch_captions(
     session = session or requests.Session()
 
     cues: list[tuple[float, float, str]] = []
+    worked: Captions | None = None
+    refused = False
 
-    try:
+    for captions_track in captions:
 
         print(
-            f"    Fetching captions: {captions.language}",
+            f"    Fetching captions: {captions_track.language}",
             flush=True,
         )
 
-        text = _download_caption_text(
-            captions.url,
-            session,
-        )
+        try:
 
-    except requests.RequestException:
-        text = ""
+            text = _download_caption_text(
+                captions_track.url,
+                session,
+            )
 
-    if text.lstrip().startswith("WEBVTT"):
+        except requests.RequestException as error:
 
-        cues = parse_vtt(text)
+            refused = refused or _asked_too_often(error)
+            text = ""
+
+        if text.lstrip().startswith("WEBVTT"):
+
+            cues = parse_vtt(text)
+
+        if cues:
+
+            worked = captions_track
+            break
 
     if not cues and media is not None and stem is not None:
 
@@ -329,7 +345,7 @@ def fetch_captions(
 
             path = fetcher(
                 media.url,
-                captions.language,
+                captions[0].language,
                 stem,
             )
 
@@ -342,19 +358,47 @@ def fetch_captions(
                     )
                 )
 
+                worked = captions[0]
+
     if not cues:
+
+        if refused:
+
+            raise RuntimeError(
+                "YouTube is rate-limiting this video's captions "
+                "(HTTP 429); trying again in a few minutes usually works"
+            )
 
         raise RuntimeError(
             "the published captions were empty"
         )
 
     print(
-        f"    Published captions ({captions.language}): "
+        f"    Published captions ({worked.language}): "
         f"{len(cues)} cues",
         flush=True,
     )
 
     return cues
+
+
+def _asked_too_often(
+    error: requests.RequestException,
+) -> bool:
+    """
+    Whether the captions were refused for being asked for too often.
+    """
+
+    response = getattr(
+        error,
+        "response",
+        None,
+    )
+
+    return (
+        getattr(response, "status_code", None)
+        == 429
+    )
 
 
 def prepare(
@@ -414,7 +458,7 @@ def prepare(
         ):
 
             cues = fetch_captions(
-                published[0],
+                tuple(published),
                 media,
                 stem,
             )

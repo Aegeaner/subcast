@@ -341,6 +341,58 @@ def test_a_watch_link_names_its_video(url: str, wanted: str | None):
     assert SOURCE.video_id(url) == wanted
 
 
+def test_a_translated_track_is_followed_by_the_one_it_came_from():
+    """
+    YouTube rate-limits translated tracks (a 429 the native one does not
+    get), so the track behind them is worth having: it is captions either
+    way, and trying it costs nothing.
+    """
+
+    payload = video()
+
+    payload["subtitles"] = {}
+
+    payload["automatic_captions"] = {
+        "zh-Hant": [
+            {"ext": "vtt", "url": "https://example.test/zh?lang=zh-Hant"},
+        ],
+        "en": [
+            {
+                "ext": "vtt",
+                "url": "https://example.test/en?lang=zh&tlang=en",
+            },
+        ],
+    }
+
+    captions = parse_media(payload).captions
+
+    assert [caption.language for caption in captions] == ["en", "zh-Hant"]
+    assert "tlang=" in captions[0].url
+    assert "tlang=" not in captions[1].url
+
+
+def test_a_native_track_has_nothing_behind_it():
+    assert len(parse_media(video()).captions) == 1
+
+
+def test_a_tracks_own_entry_beats_a_translation_of_it():
+    payload = video()
+
+    payload["subtitles"] = {
+        "en": [
+            {"ext": "vtt", "url": "https://example.test/en?tlang=de"},
+            {"ext": "vtt", "url": "https://example.test/en?lang=en"},
+        ],
+    }
+
+    payload["automatic_captions"] = {}
+
+    assert (
+        parse_media(payload).captions[0].url
+        == "https://example.test/en?lang=en"
+    )
+
+
 def test_a_track_without_vtt_is_asked_for_vtt():
     """
     YouTube serves WebVTT for any of a track's formats when the URL asks

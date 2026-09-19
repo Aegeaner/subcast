@@ -101,6 +101,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A caption track YouTube refuses is followed by the track it was
+  translated from. Translated tracks are the ones YouTube rate-limits
+  (HTTP 429) — a video whose detected source language YouTube got wrong is
+  offered as a translation into English, and that URL is refused while the
+  original answers. Measured on a video from the report: the `en`
+  translation answered 429 and `ar-orig`, the track it was translated from,
+  gave 696 cues. When every track is refused the message now says so
+  ("YouTube is rate-limiting this video's captions") instead of calling
+  them empty, which is the difference between trying again later and
+  giving up on that video's captions.
 - A stream mpv cannot load is fetched and tried once more. YouTube hands
   out signed stream URLs that answer 403 from time to time — a fresh
   extraction is the cure, and mpv stops at the first one, which used to end

@@ -146,7 +146,10 @@ follow, kept in your own config file.
 
 Captions a source already publishes come with it, no flag needed: a
 YouTube video arrives with the captions it has (seconds, no GPU), and a
-video whose captions are only automatic (ASR) gets those. Whisper is what
+video whose captions are only automatic (ASR) gets those. Where the track
+YouTube offers is a translation of the video's own language, the track
+behind it is tried too — translated tracks are the ones YouTube
+rate-limits, and captions in the original language beat an error. Whisper is what
 `--subs` is for, and it is what the sources without captions need: with no
 URL, `subcast --subs` plays the latest RTÉ Morning Ireland as audio in the
 terminal with captions transcribed locally and segment titles from RTÉ's

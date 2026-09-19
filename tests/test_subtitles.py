@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 
 import pytest
+import requests
 
 from subcast import subtitles
 from subcast.sources import Captions, Media, youtube
@@ -15,6 +16,13 @@ VTT = """WEBVTT
 00:00:01.000 --> 00:00:03.000
 Good morning.
 """
+
+
+class FakeResponse:
+    """Just enough of a response for the status code to be read."""
+
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
 
 
 def prepared() -> subtitles.Prepared:
@@ -106,8 +114,111 @@ def test_a_webvtt_caption_url_is_parsed_as_it_is(monkeypatch):
     )
 
     assert subtitles.fetch_captions(
-        Captions(language="en", url="https://example.test/en.vtt")
+        (Captions(language="en", url="https://example.test/en.vtt"),)
     ) == [(1.0, 3.0, "Good morning.")]
+
+
+def test_a_track_youtube_refuses_is_followed_by_the_one_it_came_from(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    Translated tracks are the ones YouTube rate-limits; the track they were
+    translated from answers instead, which saves an extraction.
+    """
+
+    asked: list[str] = []
+
+    def download(url: str, session) -> str:
+
+        asked.append(url)
+
+        if "tlang=" in url:
+
+            raise requests.HTTPError(
+                "429 Too Many Requests",
+                response=FakeResponse(429),
+            )
+
+        return VTT
+
+    monkeypatch.setattr(subtitles, "_download_caption_text", download)
+
+    translated = Captions(
+        language="en",
+        url="https://example.test/en?lang=zh&tlang=en&fmt=vtt",
+    )
+    native = Captions(
+        language="zh-Hant",
+        url="https://example.test/zh?lang=zh-Hant&fmt=vtt",
+    )
+
+    assert subtitles.fetch_captions(
+        (translated, native),
+        media(),
+        tmp_path / "abc",
+    ) == [(1.0, 3.0, "Good morning.")]
+
+    assert asked == [translated.url, native.url]
+
+
+def test_being_told_to_come_back_later_is_said_as_that(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    Rate limiting is not the same as captions that turned out to be empty:
+    one is worth trying again, the other is how the video is.
+    """
+
+    def download(url: str, session) -> str:
+
+        raise requests.HTTPError(
+            "429 Too Many Requests",
+            response=FakeResponse(429),
+        )
+
+    monkeypatch.setattr(subtitles, "_download_caption_text", download)
+    monkeypatch.setattr(
+        youtube.SOURCE,
+        "caption_file",
+        lambda url, language, stem: None,
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        subtitles.fetch_captions(
+            (Captions(language="en", url="https://example.test/en.vtt"),),
+            media(),
+            tmp_path / "abc",
+        )
+
+    assert "rate-limiting" in str(error.value)
+    assert "429" in str(error.value)
+
+
+def test_an_empty_track_that_is_not_rate_limited_says_so(
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setattr(
+        subtitles,
+        "_download_caption_text",
+        lambda url, session: "",
+    )
+    monkeypatch.setattr(
+        youtube.SOURCE,
+        "caption_file",
+        lambda url, language, stem: None,
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        subtitles.fetch_captions(
+            (Captions(language="en", url="https://example.test/en.vtt"),),
+            media(),
+            tmp_path / "abc",
+        )
+
+    assert "the published captions were empty" in str(error.value)
 
 
 def test_the_source_fetches_captions_a_url_cannot_give(
@@ -139,7 +250,7 @@ def test_the_source_fetches_captions_a_url_cannot_give(
     stem = tmp_path / "abc"
 
     assert subtitles.fetch_captions(
-        Captions(language="en", url="https://example.test/en.json3"),
+        (Captions(language="en", url="https://example.test/en.json3"),),
         media(),
         stem,
     ) == [(1.0, 3.0, "Good morning.")]
@@ -165,7 +276,7 @@ def test_no_captions_from_either_route_says_so(
 
     with pytest.raises(RuntimeError) as error:
         subtitles.fetch_captions(
-            Captions(language="en", url="https://example.test/en.vtt"),
+            (Captions(language="en", url="https://example.test/en.vtt"),),
             media(),
             tmp_path / "abc",
         )

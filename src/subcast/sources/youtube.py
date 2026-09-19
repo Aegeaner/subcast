@@ -531,8 +531,14 @@ def _choose_captions(
     payload: dict,
 ) -> tuple[Captions, ...]:
     """
-    The caption track to play: a published one before an automatic one,
+    The caption tracks to try, in the order to try them.
+
+    The track to play comes first - a published one before an automatic one,
     `en` before other English variants, the first of anything otherwise.
+    Behind it, when that one is a translation of the video's own language,
+    comes the track it was translated from: YouTube rate-limits translated
+    tracks far more readily (a 429 that the native one does not get), and
+    captions in the original language are better than a second extraction.
     """
 
     for field in (
@@ -557,11 +563,65 @@ def _choose_captions(
             tracks[language],
         )
 
-        if caption is not None:
+        if caption is None:
+
+            continue
+
+        native = _native_caption(
+            tracks,
+            caption,
+        )
+
+        if native is None:
 
             return (caption,)
 
+        return (caption, native)
+
     return ()
+
+
+def _native_caption(
+    tracks: dict,
+    chosen: Captions,
+) -> Captions | None:
+    """
+    The track a translation was made from, if the chosen one is a
+    translation.
+    """
+
+    if not _translated(chosen.url):
+
+        return None
+
+    for language, formats in tracks.items():
+
+        if language == chosen.language:
+
+            continue
+
+        caption = _choose_format(
+            language,
+            formats,
+        )
+
+        if caption is not None and not _translated(caption.url):
+
+            return caption
+
+    return None
+
+
+def _translated(
+    url: str,
+) -> bool:
+    """
+    Whether a caption URL is a translation of another track rather than the
+    track itself: YouTube names the language it was translated from with
+    `tlang`.
+    """
+
+    return "tlang=" in url
 
 
 def _choose_language(
@@ -595,35 +655,29 @@ def _choose_format(
     """
     The track's own `vtt` entry when it has one, and otherwise its first
     usable entry asked for WebVTT.
+
+    Entries of the track itself come before its translations: a translated
+    URL is the one YouTube is quickest to refuse.
     """
 
     if not isinstance(formats, list):
 
         return None
 
-    chosen: dict | None = None
+    usable = [
+        entry
+        for entry in formats
+        if isinstance(entry, dict) and entry.get("url")
+    ]
 
-    for entry in formats:
-
-        if not isinstance(entry, dict):
-
-            continue
-
-        if not entry.get("url"):
-
-            continue
-
-        if chosen is None or entry.get("ext") == "vtt":
-
-            chosen = entry
-
-        if entry.get("ext") == "vtt":
-
-            break
-
-    if chosen is None:
+    if not usable:
 
         return None
+
+    chosen = min(
+        usable,
+        key=_preference,
+    )
 
     # An entry that is already WebVTT is used as it is; anything else is
     # the same URL asked for WebVTT.
@@ -637,6 +691,20 @@ def _choose_format(
         language=language,
         url=url,
         ext="vtt",
+    )
+
+
+def _preference(
+    entry: dict,
+) -> tuple[bool, bool]:
+    """
+    Sort key for a track's entries: the track itself before a translation of
+    it, and WebVTT before the rest.
+    """
+
+    return (
+        _translated(entry["url"]),
+        entry.get("ext") != "vtt",
     )
 
 
