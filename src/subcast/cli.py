@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
-from . import captionbar, config, feeds, meta, picker
+from . import captionbar, config, feeds, listing, meta, picker
+from .background import Background
 from .config import DEFAULT_WHISPER_MODEL, cache_dir, save_dir
 from .media import acquire, download_audio, sanitize_filename
 from .player import Positions, play_window, play_with_mpv
@@ -151,8 +153,9 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Print the listing and choose what to play from it - by "
-            "number, a range such as 5-7, or 'all'. A saved --feed is "
-            "opened this way whether or not this is given."
+            "number, a range such as 5-7, 'all', or 'r' to fetch the "
+            "listing again. A saved --feed is opened this way whether or "
+            "not this is given."
         ),
     )
 
@@ -531,13 +534,128 @@ def cached_item(
     return item
 
 
+def cached_menu(
+    source: Source,
+    url: str,
+    limit: int,
+) -> list[Media] | None:
+    """
+    A listing a previous run fetched, when it can answer this one.
+
+    Only the menu reads this: it is the one place the entries are there to
+    be looked at, and a channel's listing takes long enough that sitting in
+    front of a blank terminal is the worst part of browsing.
+    """
+
+    find = getattr(
+        source,
+        "video_id",
+        None,
+    )
+
+    if find is not None and find(url):
+
+        # One video is not a listing: the cache knows it better than a
+        # list of one does.
+        return None
+
+    known = listing.read(
+        source.name,
+        url,
+    )
+
+    if known is None or not known.covers(limit or None):
+
+        return None
+
+    return known.taking(limit or None)
+
+
+def refresher(
+    source: Source,
+    url: str,
+    limit: int,
+) -> Callable[[], Background[list[Media]]]:
+    """
+    What fetches a listing again, for a menu to call when it wants one.
+
+    Whatever the source says is written down for the next run, whether or
+    not the menu is still waiting for it.
+    """
+
+    def again() -> Background[list[Media]]:
+
+        def work() -> list[Media]:
+
+            items = source.episodes(
+                url,
+                limit=limit or None,
+            )
+
+            listing.save(
+                source.name,
+                url,
+                limit or None,
+                items,
+            )
+
+            return items
+
+        return Background(
+            work,
+            "Refreshing the listing",
+            "the menu keeps what it had",
+        )
+
+    return again
+
+
+def menu_entries(
+    source: Source,
+    url: str,
+    args: argparse.Namespace,
+) -> tuple[list[Media], Callable[[], Background[list[Media]]] | None]:
+    """
+    What the menu shows, and how to ask the source for it again.
+
+    A listing the user asked for by name - `--list`, or entries to play -
+    is fetched fresh, because being current is what was asked for. The menu
+    is the case that can show what it has: the cached entries go up at once
+    and the fetch happens behind them.
+    """
+
+    limit = fetch_limit(args)
+
+    if args.list or not browsing(args):
+
+        return collect(source, url, limit), None
+
+    known = cached_menu(source, url, limit)
+
+    if known is None:
+
+        items = collect(source, url, limit)
+
+        listing.save(
+            source.name,
+            url,
+            limit or None,
+            items,
+        )
+
+        return items, None
+
+    return known, refresher(source, url, limit)
+
+
 def collect(
     source: Source,
     url: str,
     limit: int,
 ) -> list[Media]:
     """
-    What the URL points at: one item, or many for a playlist or listing.
+    What the URL points at, asked for now: one item, or many for a playlist
+    or listing.
     """
 
     known = cached_item(
@@ -842,7 +960,7 @@ def ready_subtitles(
 
         return None
 
-    return PendingSubtitles.done(
+    return PendingSubtitles.finished(
         prepare_item(
             media,
             args,
@@ -954,10 +1072,10 @@ def main() -> int:
             flush=True,
         )
 
-        items = collect(
+        items, again = menu_entries(
             target.source,
             target.url,
-            fetch_limit(args),
+            args,
         )
 
         print(
@@ -979,7 +1097,10 @@ def main() -> int:
 
             print()
 
-            items = picker.choose(items)
+            items = picker.choose(
+                items,
+                again,
+            )
 
             if not items:
 

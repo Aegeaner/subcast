@@ -37,7 +37,7 @@ def test_work_started_in_the_background_reports_when_it_is_done():
     job.start()
 
     assert job.done_yet() is False
-    assert job.prepared() is None
+    assert job.value() is None
 
     release.set()
 
@@ -58,10 +58,10 @@ def test_starting_twice_runs_the_work_once():
 
 
 def test_a_job_that_finished_before_playback_is_ready_at_once():
-    job = subtitles.PendingSubtitles.done(prepared())
+    job = subtitles.PendingSubtitles.finished(prepared())
 
     assert job.done_yet() is True
-    assert job.prepared() == prepared()
+    assert job.value() == prepared()
 
 
 def test_a_failure_is_carried_rather_than_raised():
@@ -84,7 +84,7 @@ def test_a_failure_is_carried_rather_than_raised():
 
 
 def test_a_job_that_worked_reports_no_failure():
-    job = subtitles.PendingSubtitles.done(prepared())
+    job = subtitles.PendingSubtitles.finished(prepared())
 
     assert job.failure_message() is None
 

@@ -436,7 +436,7 @@ def attach_subtitles(
 
         return True
 
-    prepared = subtitles.prepared()
+    prepared = subtitles.value()
 
     if prepared is None:
 

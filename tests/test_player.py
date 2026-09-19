@@ -57,7 +57,7 @@ def test_subtitles_that_are_not_ready_are_asked_about_again():
 
 
 def test_subtitles_that_are_ready_are_added_once():
-    job = PendingSubtitles.done(prepared())
+    job = PendingSubtitles.finished(prepared())
     client = FakeClient()
 
     assert player.attach_subtitles(client, job) is True
@@ -84,7 +84,7 @@ def test_a_failed_preparation_is_reported_not_retried(capsys):
 
 
 def test_mpv_refusing_the_file_is_said_out_loud(capsys):
-    job = PendingSubtitles.done(prepared())
+    job = PendingSubtitles.finished(prepared())
     client = FakeClient(problem="invalid parameter")
 
     assert player.attach_subtitles(client, job) is True

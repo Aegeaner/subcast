@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +9,7 @@ from pathlib import Path
 import requests
 
 from . import config
+from .background import Background
 from .chapters import write_chapters_file
 from .media import media_duration
 from .segments import (
@@ -39,7 +39,7 @@ class Prepared:
     segments: list[tuple[float, float, str]]
 
 
-class PendingSubtitles:
+class PendingSubtitles(Background[Prepared | None]):
     """
     Subtitles worked out while playback is already under way.
 
@@ -48,9 +48,6 @@ class PendingSubtitles:
     there are no captions) a transcription are all things mpv does not need
     - it is handed the page URL and resolves the stream itself. So the work
     moves to a thread, and the player attaches the result when it lands.
-
-    A failure is carried, not raised: the video is already playing, and
-    subtitles are not worth stopping it for.
     """
 
     def __init__(
@@ -58,14 +55,14 @@ class PendingSubtitles:
         work: Callable[[], Prepared | None],
     ) -> None:
 
-        self._work = work
-        self._done = threading.Event()
-        self._prepared: Prepared | None = None
-        self._failure: str | None = None
-        self._thread: threading.Thread | None = None
+        super().__init__(
+            work,
+            "Subtitles",
+            "playing without them",
+        )
 
     @classmethod
-    def done(
+    def finished(
         cls,
         prepared: Prepared | None,
     ) -> PendingSubtitles:
@@ -75,72 +72,11 @@ class PendingSubtitles:
         """
 
         job = cls(lambda: prepared)
-        job._prepared = prepared
+
+        job._value = prepared
         job._done.set()
 
         return job
-
-    def start(self) -> None:
-        """
-        Set the work going. Starting twice does nothing.
-        """
-
-        if self._thread is not None:
-
-            return
-
-        self._thread = threading.Thread(
-            target=self._run,
-            daemon=True,
-        )
-
-        self._thread.start()
-
-    def _run(self) -> None:
-
-        try:
-
-            self._prepared = self._work()
-
-        # Reported by whoever is playing, not raised at them.
-        except Exception as error:  # noqa: BLE001
-
-            self._failure = str(error)
-
-        finally:
-
-            self._done.set()
-
-    def done_yet(self) -> bool:
-
-        return self._done.is_set()
-
-    def prepared(self) -> Prepared | None:
-
-        return self._prepared
-
-    def failure_message(self) -> str | None:
-        """
-        What went wrong, as a line to print, or None when nothing did.
-        """
-
-        if self._failure is None:
-
-            return None
-
-        return (
-            f"    Subtitles failed: {self._failure}; "
-            "playing without them."
-        )
-
-    def wait(self) -> Prepared | None:
-        """
-        The subtitles, once the work is done. A failure comes back as None.
-        """
-
-        self._done.wait()
-
-        return self._prepared
 
 
 def transcribe(

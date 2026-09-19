@@ -28,6 +28,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   through instead, and `--remove-feed` forgets one. Not podcast RSS: a
   short list of the listings you follow, and the file is yours, so it stays
   out of the checkout.
+- **Menus open on the last listing and refresh themselves**: a channel's
+  listing takes tens of seconds, so a menu shows what the previous fetch
+  returned and asks the source again behind it - the fresh entries replace
+  the menu on screen when they arrive, and `r` asks again. Numbers always
+  mean what is on screen. `--list` and playing straight through still ask
+  the source, because being current is what those asked for.
 - **Searching and a picker for long listings**: `--search QUERY` turns a
   YouTube search into a listing, and `--pick` prints a listing and takes
   `3`, `2,5-7` or `all` from it before anything is prepared or played. A

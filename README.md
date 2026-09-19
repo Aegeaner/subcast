@@ -118,8 +118,14 @@ subcast --remove-feed bbc      # forget one
 
 Long listings are browsed rather than guessed at: `--list` prints the
 listing, `--pick` prints it and takes an answer — `3`, `2,5-7`, `all`, or
-Enter to walk away — before anything is prepared or played. A menu shows
-the newest 30 entries: enough to choose from, and little enough that
+Enter to walk away — before anything is prepared or played. A menu opens on
+the listing the last run fetched and asks the source for it again at the
+same time: what comes back replaces the menu on screen, and `r` asks again
+while you are looking at it. The numbers always mean what is on screen, so
+an answer can never land on entries that were not there when it was typed.
+`--list` and playing straight through ask the source instead of opening
+what the cache has, because what is current is what those asked for. A menu
+shows the newest 30 entries: enough to choose from, and little enough that
 opening a channel with thousands of videos is not a wait. `--limit N` asks
 for another number and `--limit 0` for the lot, and `SUBSCAST_LIMIT`
 changes what the default is. `--search QUERY` turns a YouTube search into
@@ -259,6 +265,7 @@ realtime, so ~9 minutes for a two-hour show) is the default;
 | `--save` | `~/Videos/<source>/<title>.mp3` (RTÉ) or `.mp4` (YouTube) |
 | Subtitles | `$XDG_CACHE_HOME/subcast/<source>/<id>.{srt,chapters.txt}` |
 | Cache | `$XDG_CACHE_HOME/subcast/<source>/<id>.{mp3,mp4,cues.json,segments.json,meta.json}` |
+| Listings | `$XDG_CACHE_HOME/subcast/<source>/listings/<url hash>.json` |
 | Playback position | `$XDG_CACHE_HOME/subcast/<source>/<id>.position` |
 | Feeds | `$XDG_CONFIG_HOME/subcast/feeds.json` — the one file here that is the user's rather than the tool's |
 

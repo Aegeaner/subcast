@@ -412,6 +412,98 @@ def test_a_listing_is_played_item_after_item(monkeypatch):
     ]
 
 
+def test_a_cached_listing_opens_the_menu_and_refreshes_behind_it(
+    monkeypatch,
+):
+    """
+    A channel listing takes tens of seconds; the menu shows what last
+    time's fetch returned and asks again while the user is reading.
+    """
+
+    cached = [replace(media(), key="old", title="Last time's newest")]
+    fetched: list[int] = []
+
+    monkeypatch.setattr(
+        cli.listing,
+        "read",
+        lambda source, url: cli.listing.Cached(
+            url=url,
+            fetched=time.time(),
+            limit=30,
+            items=cached,
+        ),
+    )
+    monkeypatch.setattr(
+        cli.listing,
+        "save",
+        lambda source, url, limit, items: fetched.append(limit),
+    )
+
+    class Source:
+        name = "youtube"
+
+        @staticmethod
+        def video_id(url):
+            return None
+
+        def episodes(self, url, limit=None):
+            fetched.append(limit)
+            return [replace(media(), key="new", title="Today's newest")]
+
+    source = Source()
+    items, again = cli.menu_entries(
+        source,
+        "https://youtube.com/@BBCNews",
+        args(pick=True),
+    )
+
+    assert [item.key for item in items] == ["old"]
+    assert again is not None
+
+    job = again()
+    job.start()
+
+    assert [item.key for item in job.wait()] == ["new"]
+    assert fetched == [30, 30]
+
+
+def test_playing_a_listing_fetches_it_now(monkeypatch):
+    """
+    The menu can show what it has; a run that is going to play something
+    asks the source, because what is newest is the point of it.
+    """
+
+    monkeypatch.setattr(
+        cli.listing,
+        "read",
+        lambda source, url: pytest.fail("read the cache for playback"),
+    )
+    monkeypatch.setattr(
+        cli.listing,
+        "save",
+        lambda source, url, limit, items: None,
+    )
+
+    class Source:
+        name = "youtube"
+
+        @staticmethod
+        def video_id(url):
+            return None
+
+        def episodes(self, url, limit=None):
+            return [replace(media(), key="new", title="Today's newest")]
+
+    items, again = cli.menu_entries(
+        Source(),
+        "https://youtube.com/@BBCNews",
+        args(pick=False, limit=1),
+    )
+
+    assert [item.key for item in items] == ["new"]
+    assert again is None
+
+
 def test_chapters_come_from_what_a_previous_run_left(monkeypatch, tmp_path):
     monkeypatch.setattr(
         cli,
