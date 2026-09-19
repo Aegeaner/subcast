@@ -8,6 +8,7 @@ import socket
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 # How often where an item got to is written down. Often enough that a run
@@ -17,6 +18,36 @@ SAVE_SECONDS = 5.0
 # Reaching within this much of the end counts as watched: resuming there
 # would start at the credits.
 FINISHED_SECONDS = 15.0
+
+# mpv's exit code for "the file passed to mpv couldn't be played". A stream
+# that fails this way gets one more go: YouTube hands out signed URLs that
+# answer 403 from time to time - a fresh extraction is what cures it, and
+# mpv gives up on the first one.
+LOAD_ERROR = 2
+
+
+def retry_load_error(
+    play: Callable[[], int],
+) -> int:
+    """
+    Run an mpv attempt, giving a stream it could not load one more go.
+
+    Only mpv's own "couldn't be played" is retried: quitting normally, a
+    bad option, or Ctrl-C all come back with their own status.
+    """
+
+    status = play()
+
+    if status != LOAD_ERROR:
+
+        return status
+
+    print(
+        "    mpv could not load that stream; trying once more...",
+        flush=True,
+    )
+
+    return play()
 
 
 def mpv_path() -> str:
@@ -278,6 +309,19 @@ def run_mpv(
     every caller did before resumes existed.
     """
 
+    return retry_load_error(
+        lambda: _run_once(
+            command,
+            positions,
+        )
+    )
+
+
+def _run_once(
+    command: list[str],
+    positions: Positions | None = None,
+) -> int:
+
     if positions is None:
 
         return subprocess.run(
@@ -470,7 +514,7 @@ def play_window(
         "--force-window=yes",
         (
             f"--ytdl-format=bestvideo[height<={quality}]+bestaudio/"
-            f"bestvideo[height<={quality}]+bestaudio/best"
+            f"best"
         ),
     ]
 

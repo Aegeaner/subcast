@@ -26,6 +26,7 @@ from .player import (
     Positions,
     connect,
     mpv_path,
+    retry_load_error,
     socket_directory,
     start_arguments,
 )
@@ -647,6 +648,31 @@ def play(
 
         scale = 1
 
+    return retry_load_error(
+        lambda: _play_once(
+            url,
+            cues,
+            segments,
+            chapters_path,
+            scale,
+            stream,
+            positions,
+        )
+    )
+
+
+def _play_once(
+    url: Path,
+    cues: list[tuple[float, float, str]],
+    segments: list[tuple[float, float, str]],
+    chapters_path: Path | None,
+    scale: int,
+    stream: bool,
+    positions: Positions | None,
+) -> int:
+    """
+    One attempt: mpv started for this item, up to its exit status.
+    """
 
     mpv = mpv_path()
 

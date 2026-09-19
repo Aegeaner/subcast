@@ -4,7 +4,50 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from subcast import player
+
+
+def test_a_stream_mpv_cannot_load_is_tried_once_more():
+    """
+    YouTube hands out signed stream URLs that answer 403 from time to
+    time; a fresh extraction is the cure, and mpv stops at the first one.
+    """
+
+    attempts: list[int] = []
+
+    def play() -> int:
+        attempts.append(1)
+        return player.LOAD_ERROR if len(attempts) == 1 else 0
+
+    assert player.retry_load_error(play) == 0
+    assert len(attempts) == 2
+
+
+def test_a_second_load_failure_is_reported_as_it_stands():
+    attempts: list[int] = []
+
+    def play() -> int:
+        attempts.append(1)
+        return player.LOAD_ERROR
+
+    assert player.retry_load_error(play) == player.LOAD_ERROR
+    assert len(attempts) == 2
+
+
+@pytest.mark.parametrize("status", [0, 1, 3, 4, 130])
+def test_anything_else_is_not_a_stream_to_fetch_again(status: int):
+    """A quit, a bad option or Ctrl-C must not start playback over."""
+
+    attempts: list[int] = []
+
+    def play() -> int:
+        attempts.append(1)
+        return status
+
+    assert player.retry_load_error(play) == status
+    assert len(attempts) == 1
 
 
 def test_a_position_survives_to_the_next_run(tmp_path: Path):

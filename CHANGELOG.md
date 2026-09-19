@@ -51,6 +51,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A stream mpv cannot load is fetched and tried once more. YouTube hands
+  out signed stream URLs that answer 403 from time to time — a fresh
+  extraction is the cure, and mpv stops at the first one, which used to end
+  the run with "mpv exited with 2". Only mpv's own "couldn't be played"
+  (exit 2) is retried: quitting, a bad option and Ctrl-C are not.
 - YouTube captions that do not arrive as WebVTT: the hand-off to yt-dlp was
   looked up as a method on the source while it only existed as a module
   function, so it never ran. The URL YouTube hands over for automatic

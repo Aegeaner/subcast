@@ -276,3 +276,8 @@ templates.
   separate program, executed rather than linked.
 - Captions are generated locally on your machine. Nothing is uploaded
   anywhere, and no analytics are collected.
+- Stream URLs are signed and short-lived, and YouTube's edge answers 403
+  on a freshly minted one now and then. A stream mpv cannot load is
+  therefore fetched and tried once more (`mpv could not load that stream`)
+  before the run gives up on it; two failures in a row are reported as they
+  stand.
