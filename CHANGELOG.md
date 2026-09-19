@@ -27,6 +27,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   everything downstream.
 - `--save` downloads into `~/Videos/<source>/`; `--quality` caps the video
   height; `--audio-only` plays a video's audio with captions in the terminal.
+- **Resume**: how far into an item playback got is written next to its cache
+  entry as it plays, and the next run of the same item starts from there.
+  The position is keyed by the item rather than by the stream URL, so it
+  survives RTÉ's expiring links; an item watched to the end (or mpv
+  reporting EOF) forgets its position, `--no-resume` starts over, and a
+  stream of unknown length is not remembered at all.
 - **Playback progress**: the caption block's bottom row is now a clock — how
   far in and how long in total, with a bar that fills as the episode plays.
   mpv's own terminal status line stays off in the bar, so this is the

@@ -9,22 +9,26 @@ carry colour.
 
 from __future__ import annotations
 
-import json
 import os
 import select
 import shutil
 import signal
-import socket
 import subprocess
 import sys
-import tempfile
 import termios
 import textwrap
 import time
 import tty
 from pathlib import Path
 
-from .player import mpv_path
+from .player import (
+    SAVE_SECONDS,
+    Positions,
+    connect,
+    mpv_path,
+    socket_directory,
+    start_arguments,
+)
 
 # Rows the block occupies: one title line, the previous line of dialogue,
 # up to two lines of what is being said now, and the playback clock. Kept
@@ -599,96 +603,6 @@ def draw(
     return "".join(parts)
 
 
-class _Ipc:
-    """Minimal mpv IPC client: one request at a time."""
-
-    def __init__(self, path: Path) -> None:
-
-        self.socket = socket.socket(
-            socket.AF_UNIX
-        )
-
-        self.socket.connect(
-            str(path)
-        )
-
-        self.buffer = b""
-        self.request_id = 0
-
-    def get(self, name: str):
-
-        self.request_id += 1
-
-        request = {
-            "command": ["get_property", name],
-            "request_id": self.request_id,
-        }
-
-        try:
-            self.socket.sendall(
-                (
-                    json.dumps(request) + "\n"
-                ).encode()
-            )
-
-        except OSError:
-            # mpv is on its way out. The question has no answer worth
-            # having, and failing here would only turn quitting into an
-            # error message.
-            return None
-
-        while True:
-
-            line = self._read_line()
-
-            if line is None:
-                return None
-
-            try:
-                message = json.loads(line)
-
-            except ValueError:
-                continue
-
-            if (
-                message.get("request_id")
-                == self.request_id
-            ):
-                return message.get("data")
-
-    def _read_line(self) -> str | None:
-
-        while b"\n" not in self.buffer:
-
-            try:
-                chunk = self.socket.recv(4096)
-
-            except OSError:
-                return None
-
-            if not chunk:
-                return None
-
-            self.buffer += chunk
-
-        line, _, self.buffer = (
-            self.buffer.partition(b"\n")
-        )
-
-        return line.decode(
-            "utf-8",
-            "replace",
-        )
-
-    def close(self) -> None:
-
-        try:
-            self.socket.close()
-
-        except OSError:
-            pass
-
-
 def play(
     url: Path,
     cues: list[tuple[float, float, str]],
@@ -697,6 +611,7 @@ def play(
     scale: int | None = None,
     warn_about_scale: bool = False,
     stream: bool = False,
+    positions: Positions | None = None,
 ) -> int:
     """
     Play url through mpv with our own caption block. Returns mpv's exit
@@ -707,6 +622,10 @@ def play(
     lines). It needs a terminal that renders scaled text (kitty 0.40+) and
     is dropped back to 1 anywhere else. The width of the block always
     follows the window.
+
+    `positions` is where the item is remembered and picked up from; the
+    loop that draws the block is already polling mpv, so it writes the
+    position down as it goes.
     """
 
     if (
@@ -731,13 +650,9 @@ def play(
 
     mpv = mpv_path()
 
-    socket_path = Path(
-        tempfile.gettempdir()
-    ) / f"subcast-{os.getpid()}.sock"
+    directory = socket_directory()
 
-    socket_path.unlink(
-        missing_ok=True
-    )
+    socket_path = directory / "mpv.sock"
 
     command = [
         mpv,
@@ -756,6 +671,7 @@ def play(
         # rows the block is pinned to; warnings and errors still show.
         "--msg-level=all=warn",
         f"--input-ipc-server={socket_path}",
+        *start_arguments(positions),
     ]
 
     if stream:
@@ -797,6 +713,7 @@ def play(
             cues,
             segments,
             scale,
+            positions,
         )
 
     finally:
@@ -806,8 +723,9 @@ def play(
 
         process.wait()
 
-        socket_path.unlink(
-            missing_ok=True
+        shutil.rmtree(
+            directory,
+            ignore_errors=True,
         )
 
 
@@ -817,9 +735,10 @@ def _follow(
     cues: list[tuple[float, float, str]],
     segments: list[tuple[float, float, str]],
     scale: int,
+    positions: Positions | None = None,
 ) -> int:
 
-    client = _connect(
+    client = connect(
         socket_path
     )
 
@@ -835,6 +754,7 @@ def _follow(
 
     drawn = ""
     geometry: tuple[int, int, int] | None = None
+    saved = 0.0
 
     try:
 
@@ -860,6 +780,23 @@ def _follow(
                 time.sleep(POLL_SECONDS)
                 continue
 
+            seconds = float(position)
+
+            # The block already knows where playback is, so remembering it
+            # for the next run costs one write every few seconds.
+            if (
+                positions is not None
+                and seconds - saved >= SAVE_SECONDS
+            ):
+
+                saved = seconds
+
+                positions.update(
+                    seconds,
+                    duration,
+                    bool(client.get("eof-reached")),
+                )
+
             columns, lines = terminal_size()
 
             board_scale = effective_scale(
@@ -874,8 +811,6 @@ def _follow(
                 columns,
                 board_scale,
             )
-
-            seconds = float(position)
 
             title, history, current = frame(
                 cues,
@@ -962,27 +897,3 @@ def _follow(
 
         client.close()
 
-
-def _connect(
-    socket_path: Path,
-    timeout: float = 10.0,
-) -> _Ipc | None:
-
-    deadline = time.monotonic() + timeout
-
-    while time.monotonic() < deadline:
-
-        if socket_path.exists():
-
-            try:
-                return _Ipc(socket_path)
-
-            except OSError:
-                pass
-
-        if time.monotonic() >= deadline:
-            break
-
-        time.sleep(0.05)
-
-    return None

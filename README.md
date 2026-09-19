@@ -100,6 +100,7 @@ subcast <url>                  # play it: video in an mpv window
 subcast <url> --list           # list a playlist, channel or show listing
 subcast <url> --limit 5        # play five entries in turn (0 = all)
 subcast <url> --audio-only     # audio plus terminal captions, no video
+subcast <url> --no-resume      # start over, not where you left off
 subcast <url> --subs           # transcribe too, where the source has none
 subcast <url> --save           # download to ~/Videos/<source>/
 subcast --save --subs          # keep a transcript with it
@@ -143,6 +144,15 @@ width still follows the window there). `--subs-scale=3` goes bigger still,
 
 `PageUp`/`PageDown` skip between published segments; the bar shows which
 segment you land in.
+
+Where you got to is remembered per item, so an episode or a video you stop
+half way through — `Ctrl-C`, `q`, or closing the window — starts a few
+seconds behind that point next time, and the clock picks the resumed time
+up as its starting point. What is remembered is keyed by the item rather
+than by the stream URL, so it survives RTÉ's expiring links; an item
+watched to the end forgets its position instead of resuming at the credits,
+`--no-resume` starts over, and an item of unknown length (a live stream)
+never keeps one.
 
 ## Sources
 
@@ -207,9 +217,11 @@ realtime, so ~9 minutes for a two-hour show) is the default;
 | `--save` | `~/Videos/<source>/<title>.mp3` (RTÉ) or `.mp4` (YouTube) |
 | Subtitles | `$XDG_CACHE_HOME/subcast/<source>/<id>.{srt,chapters.txt}` |
 | Cache | `$XDG_CACHE_HOME/subcast/<source>/<id>.{mp3,mp4,cues.json,segments.json}` |
+| Playback position | `$XDG_CACHE_HOME/subcast/<source>/<id>.position` |
 
-The cache is keyed by episode UUID. The transcript (`cues.json`) and the
-placed segment list (`segments.json`) are what get kept; the `.srt` and
+The cache is keyed by the item's own id (an episode UUID, a video id). The
+transcript (`cues.json`) and the placed segment list (`segments.json`) are
+what get kept; the `.srt` and
 the chapters file are rendered from them on every run, so caption
 formatting can change without another nine-minute transcription. Nothing
 is ever deleted automatically; clear old episodes yourself.

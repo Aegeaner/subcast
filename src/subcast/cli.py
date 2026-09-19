@@ -9,10 +9,11 @@ from pathlib import Path
 from . import captionbar
 from .config import DEFAULT_WHISPER_MODEL, cache_dir, save_dir
 from .media import acquire, download_audio, sanitize_filename
-from .player import play_window, play_with_mpv
+from .player import Positions, play_window, play_with_mpv
 from .sources import Media, Source, default, detect
 from .subtitles import (
     Prepared,
+    cache_stem,
     has_transcript,
     prepare,
 )
@@ -93,6 +94,16 @@ def parse_args() -> argparse.Namespace:
             "Download into ~/Videos/<source>/ instead of streaming, "
             "then stop (published captions and chapters are kept in the "
             "cache; --subs transcribes where the source has none)."
+        ),
+    )
+
+    parser.add_argument(
+        "--no-resume",
+        dest="resume",
+        action="store_false",
+        help=(
+            "Start from the beginning instead of where the item was left "
+            "last time; playback is remembered as it goes either way."
         ),
     )
 
@@ -380,6 +391,26 @@ def needs_audio(
     return not media.captions
 
 
+def saved_positions(
+    media: Media,
+    args: argparse.Namespace,
+) -> Positions | None:
+    """
+    Where this item is remembered from run to run, or None when there is
+    nothing to remember: a stream of unknown length (a live feed) has no
+    "where you were", and --no-resume is the way back to the beginning.
+    """
+
+    if not media.duration:
+
+        return None
+
+    return Positions(
+        cache_stem(media),
+        resume=args.resume,
+    )
+
+
 def play_item(
     media: Media,
     prepared: Prepared | None,
@@ -388,6 +419,19 @@ def play_item(
     """
     Audio in the terminal with our captions, video in an mpv window.
     """
+
+    positions = saved_positions(
+        media,
+        args,
+    )
+
+    if positions is not None and positions.start > 0:
+
+        print(
+            f"    Resuming at "
+            f"{format_duration(positions.start)}",
+            flush=True,
+        )
 
     if media.is_audio or args.audio_only:
 
@@ -401,6 +445,7 @@ def play_item(
                 caption_scale(args),
                 warn_about_scale=args.subs_scale != "auto",
                 stream=media.stream,
+                positions=positions,
             )
 
         return play_with_mpv(
@@ -408,6 +453,7 @@ def play_item(
             prepared.srt_path if prepared else None,
             prepared.chapters_path if prepared else None,
             stream=media.stream,
+            positions=positions,
         )
 
     return play_window(
@@ -416,6 +462,7 @@ def play_item(
         prepared.chapters_path if prepared else None,
         quality=args.quality,
         stream=media.stream,
+        positions=positions,
     )
 
 
