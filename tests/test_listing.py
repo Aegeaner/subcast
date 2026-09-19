@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from subcast import config, listing
-from subcast.sources import Media
+from subcast.sources import Captions, Media
 
 URL = "https://www.youtube.com/@BBCNews"
 
@@ -52,6 +52,55 @@ def test_a_listing_survives_to_the_next_run(monkeypatch, tmp_path: Path):
     assert [item.key for item in known.items] == ["one", "two"]
     assert known.items[0].title == "A video called one"
     assert known.items[0].duration == 300.0
+
+
+def test_a_listing_keeps_what_an_entry_carries(monkeypatch, tmp_path: Path):
+    """
+    An item is what the listing said it was, not only what it is called:
+    a podcast feed states the audio and the transcript beside it, and a
+    source whose listing says everything has nothing to re-derive either
+    one from when the item is played.
+    """
+
+    in_cache(monkeypatch, tmp_path)
+
+    listing.save(
+        "podcast",
+        URL,
+        None,
+        [
+            Media(
+                source="podcast",
+                key="clip-1",
+                title="Episode One",
+                url="https://example.test/one.mp3",
+                kind="audio",
+                captions=(
+                    Captions(
+                        language="en",
+                        url="https://example.test/one.vtt",
+                    ),
+                ),
+                stream=False,
+            )
+        ],
+    )
+
+    known = listing.read("podcast", URL)
+
+    assert known is not None
+
+    item = known.items[0]
+
+    assert item.kind == "audio"
+    assert item.stream is False
+    assert item.captions == (
+        Captions(
+            language="en",
+            url="https://example.test/one.vtt",
+            ext="vtt",
+        ),
+    )
 
 
 def test_a_listing_is_only_read_for_the_url_it_belongs_to(

@@ -17,7 +17,7 @@ from pathlib import Path
 
 from . import config
 from .background import Background
-from .sources import Media
+from .sources import Captions, Media
 
 # Kept longer than this and it is only a starting point: the refresh
 # replaces it as soon as the source answers anyway.
@@ -138,6 +138,7 @@ def read(
             continue
 
         duration = entry.get("duration")
+        kind = entry.get("kind")
 
         items.append(
             Media(
@@ -145,12 +146,20 @@ def read(
                 key=key,
                 title=title,
                 url=item_url,
+                kind=(
+                    kind
+                    if isinstance(kind, str) and kind
+                    else "video"
+                ),
                 duration=(
                     float(duration)
                     if isinstance(duration, (int, float))
                     else None
                 ),
                 stream=bool(entry.get("stream", True)),
+                captions=_caption_tuple(
+                    entry.get("captions")
+                ),
             )
         )
 
@@ -168,6 +177,57 @@ def read(
         ),
         items=items,
     )
+
+
+def _caption_tuple(
+    raw: object,
+) -> tuple[Captions, ...]:
+    """
+    The caption tracks a listing entry carried.
+
+    A source whose listing says everything - a podcast feed, which
+    states the audio and the transcript with it - has nothing to
+    re-derive them from at play time, so they are kept rather than
+    dropped on the way through the cache.
+    """
+
+    if not isinstance(raw, list):
+
+        return ()
+
+    tracks: list[Captions] = []
+
+    for entry in raw:
+
+        if not isinstance(entry, dict):
+            continue
+
+        url = entry.get("url")
+
+        if not isinstance(url, str) or not url:
+
+            continue
+
+        language = entry.get("language")
+        ext = entry.get("ext")
+
+        tracks.append(
+            Captions(
+                language=(
+                    language
+                    if isinstance(language, str) and language
+                    else "en"
+                ),
+                url=url,
+                ext=(
+                    ext
+                    if isinstance(ext, str) and ext
+                    else "vtt"
+                ),
+            )
+        )
+
+    return tuple(tracks)
 
 
 def save(
@@ -198,8 +258,17 @@ def save(
                         "key": item.key,
                         "title": item.title,
                         "url": item.url,
+                        "kind": item.kind,
                         "duration": item.duration,
                         "stream": item.stream,
+                        "captions": [
+                            {
+                                "language": track.language,
+                                "url": track.url,
+                                "ext": track.ext,
+                            }
+                            for track in item.captions
+                        ],
                     }
                     for item in items
                 ],

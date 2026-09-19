@@ -60,7 +60,8 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Play or save an episode with subtitles: generated locally "
             "when the source publishes none, and shown as they play. "
-            "Give it a URL (YouTube video, playlist or channel, or an "
+            "Give it a URL (YouTube video, playlist or channel, a BBC "
+            "Audio page, a Bloomberg podcast, a podcast feed, or an "
             "RTÉ Radio 1 programme or episode page) or nothing at all "
             "for the latest Morning Ireland."
         )
@@ -71,7 +72,8 @@ def parse_args() -> argparse.Namespace:
         nargs="?",
         default="",
         help=(
-            "YouTube video, playlist or channel URL, or an RTÉ "
+            "YouTube video, playlist or channel URL, a BBC Audio page, "
+            "a Bloomberg podcast series, a podcast feed, or an RTÉ "
             "Radio 1 programme or episode URL. Omit for the latest "
             "Morning Ireland."
         ),
@@ -128,8 +130,10 @@ def parse_args() -> argparse.Namespace:
         "--add-feed",
         action="store_true",
         help=(
-            "Save the URL (a YouTube playlist or channel) as a feed, "
-            "named by --name or after the listing itself."
+            "Save the URL as a feed: a YouTube playlist or channel, an "
+            "RTÉ programme, a BBC Audio programme or category, a "
+            "Bloomberg podcast series, or any podcast feed. Named by "
+            "--name or after the listing itself."
         ),
     )
 

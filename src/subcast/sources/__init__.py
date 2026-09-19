@@ -12,6 +12,49 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+import requests
+
+# What a source says it is when it fetches a page. The sites subcast
+# reads serve a browser, and some refuse anything else outright, so this
+# is one definition rather than a per-site decision.
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/139.0 Safari/537.36"
+)
+
+FETCH_TIMEOUT = 30.0
+
+
+def fetch_text(
+    url: str,
+    session: requests.Session | None = None,
+) -> str:
+    """
+    The body of a page or feed a source reads.
+
+    A refusal is raised as it comes: the caller's message says what it
+    was reading, and the status code is the most useful thing to add to
+    it. Sources that need headers of their own (RTÉ) fetch for
+    themselves.
+    """
+
+    session = session or requests.Session()
+
+    response = session.get(
+        url,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept-Language": "en;q=0.9",
+        },
+        timeout=FETCH_TIMEOUT,
+        allow_redirects=True,
+    )
+
+    response.raise_for_status()
+
+    return response.text
+
 
 @dataclass(frozen=True)
 class Segment:
@@ -129,9 +172,15 @@ def detect(
     The source that handles a URL.
     """
 
-    from . import rte, youtube
+    from . import bbc, bloomberg, podcast, rte, youtube
 
-    for source in (youtube.SOURCE, rte.SOURCE):
+    for source in (
+        youtube.SOURCE,
+        bbc.SOURCE,
+        bloomberg.SOURCE,
+        podcast.SOURCE,
+        rte.SOURCE,
+    ):
 
         if source.matches(url):
             return source
@@ -148,9 +197,15 @@ def by_name(
     The source with this name, if it is one we know.
     """
 
-    from . import rte, youtube
+    from . import bbc, bloomberg, podcast, rte, youtube
 
-    for source in (youtube.SOURCE, rte.SOURCE):
+    for source in (
+        youtube.SOURCE,
+        bbc.SOURCE,
+        bloomberg.SOURCE,
+        podcast.SOURCE,
+        rte.SOURCE,
+    ):
 
         if source.name == name:
             return source

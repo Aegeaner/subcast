@@ -7,11 +7,18 @@ from pathlib import Path
 import pytest
 
 from subcast import config, feeds, sources
+from subcast.sources import podcast
 from subcast.sources.rte import Rte
 from subcast.sources.youtube import Youtube
 
 SKY = "https://www.youtube.com/@SkyNews"
 BBC = "https://www.youtube.com/@BBCNews"
+
+FEED = (
+    Path(__file__).parent
+    / "fixtures"
+    / "podcast_feed.rss"
+)
 
 
 def in_config_dir(
@@ -127,6 +134,38 @@ def test_a_programme_names_a_feed_after_itself(
     assert feeds.title_for(
         "https://www.rte.ie/radio/radio1/example-show/"
     ) == "Example Show"
+
+
+def test_a_podcast_feed_is_saved_under_its_own_name(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    A feed URL is saved the way a channel is: the source is asked what
+    the listing calls itself, and that is the name it is kept under.
+    """
+
+    in_config_dir(monkeypatch, tmp_path)
+
+    monkeypatch.setattr(
+        podcast,
+        "fetch_text",
+        lambda url, session=None: FEED.read_text(encoding="utf-8"),
+    )
+
+    url = "https://example.test/show.rss"
+
+    feeds.add(
+        feeds.title_for(url),
+        url,
+    )
+
+    assert feeds.load() == [
+        feeds.Feed(
+            name="Example Podcast",
+            url=url,
+        )
+    ]
 
 
 def test_a_source_that_cannot_name_a_listing_needs_a_name(
