@@ -17,7 +17,6 @@ from urllib.parse import urlsplit, urlunsplit
 
 from . import Captions, Media, Segment
 
-
 NAME = "youtube"
 
 HOSTS = frozenset(
@@ -174,7 +173,7 @@ def yt_dlp_json(
 
     if not isinstance(payload, dict):
 
-        raise RuntimeError(
+        raise TypeError(
             f"yt-dlp returned no video for {url}"
         )
 

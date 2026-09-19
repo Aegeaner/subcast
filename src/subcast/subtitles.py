@@ -23,6 +23,7 @@ from .srt import (
     write_srt,
 )
 
+
 @dataclass(frozen=True)
 class Prepared:
     """
@@ -95,7 +96,8 @@ def transcribe(
 
             break
 
-        except Exception as exc:
+        # Any failure means this device cannot run the model.
+        except Exception as exc:  # noqa: BLE001 - try the next device
 
             last_error = exc
 

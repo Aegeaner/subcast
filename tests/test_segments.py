@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -65,7 +66,7 @@ def test_segments_stay_ordered_and_inside_the_episode():
 
     assert all(
         first[0] <= second[0]
-        for first, second in zip(segments, segments[1:])
+        for first, second in pairwise(segments)
     )
 
     assert segments[-1][1] <= 4200.0

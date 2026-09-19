@@ -541,7 +541,7 @@ def main() -> int:
 
         return 130
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the command reports it below
 
         print(
             f"\nError: {exc}",

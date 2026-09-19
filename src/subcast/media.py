@@ -8,7 +8,6 @@ from pathlib import Path
 
 import requests
 
-
 AUDIO_SUFFIXES = (
     ".mp3",
     ".m4a",
@@ -246,7 +245,8 @@ def download_audio(
                 temp_path.unlink(
                     missing_ok=True
                 )
-            except Exception:
+            # The temporary file is being discarded anyway.
+            except OSError:
                 pass
 
         raise
@@ -305,7 +305,7 @@ def media_duration(
             result.stdout.strip()
         )
 
-    except Exception:
+    except (OSError, ValueError, subprocess.SubprocessError):
         return 0.0
 
 
