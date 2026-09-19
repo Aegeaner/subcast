@@ -19,6 +19,7 @@ from .subtitles import (
     prepare,
 )
 
+
 def caption_style(
     args: argparse.Namespace,
 ) -> str:
