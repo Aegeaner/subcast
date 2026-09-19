@@ -21,7 +21,9 @@ import time
 import tty
 from pathlib import Path
 
+from .live import LiveCaptions
 from .player import (
+    LIVE_AUDIO_FORMAT,
     SAVE_SECONDS,
     Positions,
     connect,
@@ -30,7 +32,7 @@ from .player import (
     socket_directory,
     start_arguments,
 )
-from .subtitles import PendingSubtitles
+from .subtitles import PendingSubtitles, Prepared
 
 # Rows the block occupies: one title line, the previous line of dialogue,
 # up to two lines of what is being said now, and the playback clock. Kept
@@ -613,6 +615,7 @@ def play(
     warn_about_scale: bool = False,
     stream: bool = False,
     positions: Positions | None = None,
+    live: bool = False,
 ) -> int:
     """
     Play url through mpv with our own caption block. Returns mpv's exit
@@ -628,6 +631,10 @@ def play(
     lines). It needs a terminal that renders scaled text (kitty 0.40+) and
     is dropped back to 1 anywhere else. The width of the block always
     follows the window.
+
+    `live` is a broadcast, whose cues arrive as they are made rather than
+    all at once: the block draws each batch as it lands, and the sound is
+    what is played.
     """
 
     if (
@@ -657,6 +664,7 @@ def play(
             scale,
             stream,
             positions,
+            live,
         )
     )
 
@@ -668,6 +676,7 @@ def _play_once(
     scale: int,
     stream: bool,
     positions: Positions | None,
+    live: bool = False,
 ) -> int:
     """
     One attempt: mpv started for this item, up to its exit status.
@@ -702,11 +711,16 @@ def _play_once(
     if stream:
 
         # A page URL (YouTube): mpv resolves it through yt-dlp, and the
-        # block only cares about the audio.
+        # block only cares about the audio - which on a broadcast means the
+        # cheapest format carrying sound, since it has no audio-only one.
         command.extend(
             [
                 "--ytdl=yes",
-                "--ytdl-format=bestaudio/best",
+                (
+                    f"--ytdl-format={LIVE_AUDIO_FORMAT}"
+                    if live
+                    else "--ytdl-format=bestaudio/best"
+                ),
             ]
         )
 
@@ -769,7 +783,7 @@ def _follow(
     wait - which is the part that matters.
     """
 
-    prepared = subtitles.wait()
+    settled = subtitles.wait()
 
     failure = subtitles.failure_message()
 
@@ -777,8 +791,21 @@ def _follow(
 
         print(failure, flush=True)
 
-    cues = prepared.cues if prepared is not None else []
-    segments = prepared.segments if prepared is not None else []
+    # A broadcast's captions are never finished: what settles there is the
+    # job that keeps making them, and its cues are read again on each
+    # redraw.
+    live = settled if isinstance(settled, LiveCaptions) else None
+
+    if live is not None:
+
+        # The capture begins when something is watching the broadcast: an
+        # item prepared for later has nothing playing to be in step with.
+        live.start()
+
+    cues = settled.cues if isinstance(settled, Prepared) else []
+    segments = settled.segments if isinstance(settled, Prepared) else []
+
+    reported = False
 
     client = connect(
         socket_path
@@ -823,6 +850,46 @@ def _follow(
                 continue
 
             seconds = float(position)
+
+            if live is not None:
+
+                # The live edge is what places a caption: what mpv has read
+                # up to is the audio being captured at that moment.
+                edge = client.get(
+                    "demuxer-cache-time"
+                )
+
+                live.sample(
+                    time.monotonic(),
+                    float(
+                        edge
+                        if edge is not None
+                        else seconds
+                    ),
+                )
+
+                cues = live.cues()
+
+                notes = live.take_notes()
+
+                if not reported:
+
+                    failure = live.failure_message()
+
+                    if failure is not None:
+
+                        reported = True
+                        notes.append(failure)
+
+                if notes:
+
+                    for note in notes:
+
+                        print(note, flush=True)
+
+                    # Something was printed over the block: the next
+                    # redraw has to put it back.
+                    drawn = ""
 
             # The block already knows where playback is, so remembering it
             # for the next run costs one write every few seconds.

@@ -132,6 +132,112 @@ touched. The size follows the window: bigger text on a wider window, up to 3x.
 Where the terminal cannot render scaled text, subcast says so and stays at
 normal size.
 
+## Broadcasts
+
+A live item is the one that cannot be treated as a file, and three things
+follow from it:
+
+- **There is nothing finished to transcribe.** A broadcast has no end, so
+  `yt-dlp -f bestaudio` on it downloads until the stream stops, and the
+  transcription would only begin then. Captioning it means working while it
+  airs.
+- **Its captions cannot be fetched either.** Where YouTube does caption a
+  broadcast, the track it offers is an HLS playlist of WebVTT segments that
+  grows for as long as the stream does - a manifest, not a file - and
+  subcast's caption fetch reads files. So a broadcast has subtitles only when
+  the run asks for transcription (`--subs`, or `--subs-from asr`), which is
+  why `wants_subtitles` answers for a live item from the flags alone.
+- **It has no captions published for the usual reason.** Most broadcasts -
+  the looping streams, the 24-hour channels - have no track at all.
+
+So `Media.live` is what a source marks such an item with, and the captioning
+is a job rather than a file. `Capture` reads the broadcast through yt-dlp one
+more time, at the cheapest format carrying sound - a live item has no audio-only
+format, so that is 144p of muxed HLS whose picture ffmpeg drops - and cuts it
+into five-second chunks. What is heard is appended to `<id>.live.srt`, which is
+a file of its own on purpose: a broadcast's partial captions must never be
+mistaken for the transcript of the video the broadcast becomes.
+
+That same absence decides what `--audio-only` plays: `bestaudio/best` falls back
+to the whole 1080p stream for its sound (5421k against 144p's 290k, measured on
+one broadcast), so a live item is asked for the cheapest format carrying sound
+instead.
+
+**Four things are kept apart, because doing them together is what made captions
+come and go:**
+
+- **A chunk is its number, not its place in a listing.** The files are deleted
+  as they are heard - and the last one is kept to be joined to the next - so a
+  listing shifts under its own cursor. Walking by position dropped every second
+  chunk of one broadcast: captions in fifteen-second bursts with fifteen
+  seconds of nothing between them.
+- **Placement is settled when a chunk closes**, from mpv's own reading edge, and
+  carried with the chunk until it is heard. A transcriber that is a minute
+  behind then costs a minute of delay rather than captions at a moment the
+  broadcast has gone past; and a queue longer than three chunks drops the oldest
+  and says so once, because for a broadcast being incomplete beats being late
+  for good.
+- **What is left unheard of a chunk is heard again in front of the next one**,
+  cut where the captions stopped rather than at a fixed overlap, so a sentence
+  arriving across the join is not handed to the model in halves and the join is
+  only as long as the silence it covers. A cue the model places before that cut
+  is dropped, and so is anything from the last second and a half of a chunk: the
+  audio runs out there, and the next pass hears those words again with the ones
+  after them.
+- **Nothing waits on a chunk boundary.** A pass is heard as soon as a chunk
+  closes (five seconds of broadcast, transcribed in about 0.3s), and the words
+  it adds are written straight away. What a caption costs in delay is that five
+  seconds, which is what has to fit inside mpv's own ten-to-sixteen seconds of
+  buffer - it did not when a chunk was fifteen seconds long, and the first five
+  seconds of every one of those was written after the picture had already gone
+  past it.
+
+**Where a cue belongs is mpv's to say.** Its `demuxer-cache-time` is the
+position mpv has read up to, which is the audio being captured at that moment -
+so a chunk that closed now began at that value less the time it took to
+record. Mapping through it puts the caption at the words as mpv plays them.
+Timing a live cue from the playback position instead would put every one of
+them a buffer's worth early, because mpv plays a broadcast some ten to fifteen
+seconds behind the publisher's live edge (measured on a live HLS item:
+`time-pos` 7716.9 rising with the wall clock while `cache-time` sat 10-15s
+ahead of it).
+
+That edge is only a timeline once it keeps time with the clock. While mpv is
+filling its buffer at the start of a run it reads faster than the broadcast is
+published - 27 seconds of stream in 16 seconds of clock, measured - and placing
+a chunk from one of those readings put the first chunk thirteen seconds early,
+where mpv had already played past it and nothing showed it.
+
+The hearing itself is greedy (one beam) and, unlike an episode, without the
+voice filter. Measured through this pipeline on the same audio: 104 words
+against 211 without it, and where the two disagree the filter is usually the
+one that is wrong - it drops whole sentences and cuts the fronts off words
+("The ants on the slide" heard as "Hands on the slide"). What the filter was
+there for is a loop guard instead: over music the model invents, as the same
+sentence cue after cue (measured: one line ten times, another twenty-five), and
+nobody says the same words twice in five seconds of broadcast, so only the
+first of a run is kept. Deliberately not `temperature=0`: it reads like the
+safer choice, and measured it is the opposite - 699 words of which 40 cues were
+the model repeating itself, against 456 words and 2 repeats with the default
+fallbacks left in.
+
+The cost is one more extraction of the stream beside mpv's own, which is what
+`--subs` already costs on a video, and a chunk of broadcast kept on disk at a
+time - each one is deleted once it has been heard. A run gets mpv's own
+logging out of the way while it does this: every subtitle reload makes mpv log
+its whole track list (`Reloaded:` and four lines of streams), and a broadcast
+reloads every chunk, so `--msg-level=cplayer=warn` is passed with the captions.
+Only that module - `all=warn` would take the terminal's subtitles with it -
+and warnings and errors still get through.
+
+Pausing, or seeking back into the DVR window, leaves the captions where they
+were: they are placed on the broadcast's own timeline, and only watching at the
+live edge keeps them lined up with the picture.
+
+Two flags are refused on a broadcast rather than quietly doing the wrong
+thing: `--save`, because there is no end to download up to, and `--no-play`,
+because captions that are made while it airs cannot be made without it.
+
 ## Resume
 
 Positions are keyed by the item rather than by the stream URL, because signed
@@ -170,7 +276,10 @@ are Apache-2.0, and mpv is a separate program, executed rather than linked.
 ## What is next
 
 Local files and arbitrary URLs as sources; podcast RSS feeds alongside saved
-YouTube listings; per-source options such as cookies for age-restricted videos.
+YouTube listings; per-source options such as cookies for age-restricted videos;
+following a broadcast's own live caption playlist where it publishes one, which
+needs no GPU but the same growing-subtitle plumbing a broadcast's captions
+already have.
 
 ## Notes for maintainers
 

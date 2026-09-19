@@ -282,3 +282,37 @@ def test_no_captions_from_either_route_says_so(
         )
 
     assert "the published captions were empty" in str(error.value)
+
+
+def test_settings_replace_the_defaults_rather_than_sitting_beside_them():
+    """
+    A live chunk is heard without the voice filter and an episode with it,
+    and both go through the same reader: a setting has to replace a default
+    rather than be passed twice, which is a TypeError - and one broadcast
+    lost its captions to exactly that.
+    """
+
+    class FakeModel:
+        """Records what the reader was asked for."""
+
+        def __init__(self) -> None:
+            self.seen: dict = {}
+
+        def transcribe(self, path, **options):
+            self.seen = options
+            return iter([]), None
+
+    model = FakeModel()
+
+    subtitles.transcribe_cues(
+        model,
+        Path("/tmp/chunk.wav"),
+        vad_filter=False,
+        beam_size=1,
+        best_of=1,
+    )
+
+    assert model.seen["vad_filter"] is False
+    assert model.seen["beam_size"] == 1
+    assert model.seen["language"] == "en"
+    assert model.seen["condition_on_previous_text"] is False

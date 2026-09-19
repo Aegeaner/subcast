@@ -449,6 +449,8 @@ def parse_media(
 
     video_id = payload.get("id") or ""
 
+    live = _live(payload)
+
     return Media(
         source=NAME,
         key=str(video_id),
@@ -457,13 +459,33 @@ def parse_media(
         kind="video",
         duration=(
             None
-            if payload.get("is_live")
+            if live
             else _seconds(payload.get("duration"))
         ),
         stream=True,
         captions=_choose_captions(payload),
         segments=_chapters(payload),
+        live=live,
     )
+
+
+def _live(
+    payload: dict,
+) -> bool:
+    """
+    Whether the payload is a broadcast that is still airing.
+
+    `is_live` is what a player response says, `live_status` what yt-dlp
+    puts in its own metadata - and in a flat listing entry, where the
+    player response is not there. A finished broadcast ("post_live" or
+    "was_live") is a recording like any other.
+    """
+
+    if payload.get("is_live"):
+
+        return True
+
+    return payload.get("live_status") == "is_live"
 
 
 def _entry_media(
@@ -498,6 +520,7 @@ def _entry_media(
         kind="video",
         duration=_seconds(entry.get("duration")),
         stream=True,
+        live=_live(entry),
     )
 
 

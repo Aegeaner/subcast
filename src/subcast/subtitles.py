@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import requests
 
@@ -26,6 +27,11 @@ from .srt import (
     write_srt,
 )
 
+if TYPE_CHECKING:
+    # A live item's captions are a job that keeps running, not a file: the
+    # two are what this job can hand back.
+    from .live import LiveCaptions
+
 
 @dataclass(frozen=True)
 class Prepared:
@@ -40,7 +46,7 @@ class Prepared:
     segments: list[tuple[float, float, str]]
 
 
-class PendingSubtitles(Background[Prepared | None]):
+class PendingSubtitles(Background["Prepared | LiveCaptions | None"]):
     """
     Subtitles worked out while playback is already under way.
 
@@ -49,11 +55,14 @@ class PendingSubtitles(Background[Prepared | None]):
     there are no captions) a transcription are all things mpv does not need
     - it is handed the page URL and resolves the stream itself. So the work
     moves to a thread, and the player attaches the result when it lands.
+
+    A broadcast has no result: what lands there is the job that keeps
+    making the captions, which the player drives for as long as it plays.
     """
 
     def __init__(
         self,
-        work: Callable[[], Prepared | None],
+        work: Callable[[], Prepared | LiveCaptions | None],
     ) -> None:
 
         super().__init__(
@@ -65,7 +74,7 @@ class PendingSubtitles(Background[Prepared | None]):
     @classmethod
     def finished(
         cls,
-        prepared: Prepared | None,
+        prepared: Prepared | LiveCaptions | None,
     ) -> PendingSubtitles:
         """
         A job that ran to completion before playback started, for the paths
@@ -91,7 +100,143 @@ def transcribe(
     Returns the speech cues as (start, end, text).
     """
 
+    model = load_model(
+        model_name,
+        device,
+    )
+
+    print(
+        "    Transcribing (this takes a while)...",
+        flush=True,
+    )
+
+    stream, info = _stream(
+        model,
+        audio_path,
+    )
+
+    cues: list[tuple[float, float, str]] = []
+
+    last_reported = -1
+
+    for segment in stream:
+
+        text = segment.text.strip()
+
+        if text:
+
+            cues.append(
+                (
+                    float(segment.start),
+                    float(segment.end),
+                    text,
+                )
+            )
+
+        # One progress line per transcribed minute of audio.
+        minute = int(segment.end // 60)
+
+        if (
+            minute != last_reported
+            and info.duration
+        ):
+
+            last_reported = minute
+
+            print(
+                f"\r    Transcribed: "
+                f"{minute} min / "
+                f"{info.duration / 60:.0f} min "
+                f"({segment.end / info.duration * 100:.0f}%)",
+                end="",
+                flush=True,
+            )
+
+    print()
+
+    if not cues:
+
+        raise RuntimeError(
+            "Whisper produced no speech for this episode."
+        )
+
+    return cues
+
+
+def transcribe_cues(
+    model,
+    audio_path: Path,
+    **settings,
+) -> list[tuple[float, float, str]]:
+    """
+    One file's speech, as cues relative to where it starts.
+
+    The same model the whole-episode path uses, on a piece of a
+    broadcast: a chunk has no beginning of its own, so where it belongs on
+    the timeline is the caller's to say. `settings` are for what only a
+    chunk needs - it is heard while it is still being followed, where an
+    episode is heard once and for good.
+    """
+
+    stream, _info = _stream(
+        model,
+        audio_path,
+        **settings,
+    )
+
+    return [
+        (
+            float(segment.start),
+            float(segment.end),
+            segment.text.strip(),
+        )
+        for segment in stream
+        if segment.text.strip()
+    ]
+
+
+def _stream(
+    model,
+    audio_path: Path,
+    **settings,
+):
+    """
+    The model reading a file: English speech, silence dropped.
+
+    One definition, because these settings are what the transcript is -
+    an episode and a live chunk have to be heard the same way - and
+    `settings` are only for the two that are not: how the decoder is run,
+    and how much of the sound the voice filter is allowed to keep. They
+    replace a default rather than sit beside it.
+    """
+
+    options = {
+        "language": "en",
+        "vad_filter": True,
+        "condition_on_previous_text": False,
+    }
+
+    options.update(settings)
+
+    return model.transcribe(
+        str(audio_path),
+        **options,
+    )
+
+
+def load_model(
+    model_name: str,
+    device: str,
+):
+    """
+    A Whisper model on the first device that will take it.
+
+    `auto` is the GPU when it works and the CPU when it does not, and a
+    device that cannot run the model costs speed rather than the run.
+    """
+
     try:
+
         from faster_whisper import (
             WhisperModel,
         )
@@ -157,64 +302,7 @@ def transcribe(
             f"{model_name}: {last_error}"
         )
 
-    print(
-        "    Transcribing (this takes a while)...",
-        flush=True,
-    )
-
-    stream, info = model.transcribe(
-        str(audio_path),
-        language="en",
-        vad_filter=True,
-        condition_on_previous_text=False,
-    )
-
-    cues: list[tuple[float, float, str]] = []
-
-    last_reported = -1
-
-    for segment in stream:
-
-        text = segment.text.strip()
-
-        if text:
-
-            cues.append(
-                (
-                    float(segment.start),
-                    float(segment.end),
-                    text,
-                )
-            )
-
-        # One progress line per transcribed minute of audio.
-        minute = int(segment.end // 60)
-
-        if (
-            minute != last_reported
-            and info.duration
-        ):
-
-            last_reported = minute
-
-            print(
-                f"\r    Transcribed: "
-                f"{minute} min / "
-                f"{info.duration / 60:.0f} min "
-                f"({segment.end / info.duration * 100:.0f}%)",
-                end="",
-                flush=True,
-            )
-
-    print()
-
-    if not cues:
-
-        raise RuntimeError(
-            "Whisper produced no speech for this episode."
-        )
-
-    return cues
+    return model
 
 
 def _download_caption_text(

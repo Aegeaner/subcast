@@ -7,9 +7,11 @@ site already publishes, and transcribes the audio on your own machine with
 Whisper when there are none. A segment title tops the caption block, and you can
 skip between segments while you watch.
 
-Subcast works with **YouTube** (videos, playlists and channels, using
-YouTube's own captions and chapters) and **RTÉ Morning Ireland** (audio, with
-segment titles from RTÉ's clip list).
+Subcast works with **YouTube** (videos, playlists, channels and live
+broadcasts, using YouTube's own captions and chapters) and **RTÉ Morning
+Ireland** (audio, with segment titles from RTÉ's clip list). A broadcast has no
+finished audio and nothing to caption it with, so `--subs` transcribes it as it
+plays: the captions follow the picture by a few seconds.
 
 This page installs subcast and plays something with it. Everything else lives
 in the documentation:

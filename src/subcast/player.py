@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from .live import LiveCaptions
 from .meta import Streams
 from .subtitles import PendingSubtitles
 
@@ -31,6 +32,13 @@ FINISHED_SECONDS = 15.0
 # answer 403 from time to time - a fresh extraction is what cures it, and
 # mpv gives up on the first one.
 LOAD_ERROR = 2
+
+# What mpv is asked for when only the sound of a broadcast is wanted. A live
+# item has no audio-only format at all - its formats are muxed - so the
+# cheapest one carrying sound is the cheapest way at the audio: 144p at 290k
+# against the 1080p the plain `bestaudio/best` falls back to, which is 5421k
+# on the same stream.
+LIVE_AUDIO_FORMAT = "worstaudio/worst"
 
 
 def retry_load_error(
@@ -488,6 +496,141 @@ def attach_subtitles(
     return True
 
 
+def settled_live(
+    subtitles: PendingSubtitles,
+) -> LiveCaptions | None:
+    """
+    The live job a preparation turned into, once the resolve is done.
+
+    Until then there is nothing to hand mpv either way, and a video that
+    was not a broadcast gets its subtitle file the way it always has.
+    """
+
+    if not subtitles.done_yet():
+
+        return None
+
+    value = subtitles.value()
+
+    return value if isinstance(value, LiveCaptions) else None
+
+
+class LiveView:
+    """
+    mpv's side of a broadcast: where it has read up to, and the captions
+    that have landed since the last look.
+
+    `cache-time` is the position mpv has read up to, which is the audio
+    being captured at that moment - the one reading that says where a
+    chunk of it belongs. A source that does not report it leaves the
+    playback position, which is the same thing less mpv's own buffer.
+    """
+
+    def __init__(
+        self,
+        client: Ipc,
+        live: LiveCaptions,
+    ) -> None:
+
+        self.client = client
+        self.live = live
+        self.attached = False
+        self.reported = False
+
+        # Nothing has been handed to mpv yet, whatever the job has already
+        # heard: the first look is what attaches it.
+        self.revision = 0
+
+        # The capture begins when something is watching the broadcast: an
+        # item prepared for later has nothing playing to be in step with.
+        live.start()
+
+    def pass_over(self) -> None:
+        """
+        One look: sample the live edge, say what went wrong once, and hand
+        the captions over when there are new ones.
+        """
+
+        edge = self.client.get(
+            "demuxer-cache-time"
+        )
+
+        position = self.client.get(
+            "time-pos"
+        )
+
+        seen = edge if edge is not None else position
+
+        if seen is not None:
+
+            self.live.sample(
+                time.monotonic(),
+                float(seen),
+            )
+
+        for note in self.live.take_notes():
+
+            print(note, flush=True)
+
+        if not self.reported:
+
+            failure = self.live.failure_message()
+
+            if failure is not None:
+
+                self.reported = True
+
+                print(failure, flush=True)
+
+        revision = self.live.revision()
+
+        if revision == self.revision:
+
+            return
+
+        self.revision = revision
+
+        if revision == 0:
+
+            # Nothing has been said yet, so there is no file to hand over.
+            return
+
+        if self.attached:
+
+            problem = self.client.command(
+                "sub-reload"
+            )
+
+            if problem is None:
+
+                return
+
+            print(
+                "    mpv would not read the live captions again "
+                f"({problem}).",
+                flush=True,
+            )
+
+            return
+
+        problem = self.client.command(
+            "sub-add",
+            str(self.live.srt_path),
+            "select",
+        )
+
+        if problem is None:
+
+            self.attached = True
+
+            return
+
+        print(
+            f"    mpv would not take the live captions ({problem}).",
+            flush=True,
+        )
+
+
 def follow(
     process: subprocess.Popen,
     socket_path: Path,
@@ -498,6 +641,10 @@ def follow(
     Write down where mpv is up to while it plays, so a run that ends
     abruptly still resumes where it stopped - and give mpv the subtitles
     once they are ready.
+
+    A broadcast is the case that never becomes ready: its captions are made
+    while it airs, so the file is handed over as soon as the first cues are
+    in it and reloaded each time it grows.
     """
 
     client = connect(
@@ -509,32 +656,51 @@ def follow(
 
     waiting = subtitles is not None
 
+    view: LiveView | None = None
+
     try:
 
         while process.poll() is None:
 
-            seconds = client.get(
-                "time-pos"
-            )
+            if positions is not None:
 
-            if positions is not None and seconds is not None:
-
-                positions.update(
-                    float(seconds),
-                    client.get("duration"),
-                    bool(client.get("eof-reached")),
+                seconds = client.get(
+                    "time-pos"
                 )
 
-            if waiting:
+                if seconds is not None:
 
-                waiting = not attach_subtitles(
-                    client,
-                    subtitles,
+                    positions.update(
+                        float(seconds),
+                        client.get("duration"),
+                        bool(client.get("eof-reached")),
+                    )
+
+            if view is not None:
+
+                view.pass_over()
+
+            elif waiting:
+
+                live = settled_live(
+                    subtitles
                 )
+
+                if live is None:
+
+                    waiting = not attach_subtitles(
+                        client,
+                        subtitles,
+                    )
+
+                else:
+
+                    waiting = False
+                    view = LiveView(client, live)
 
             time.sleep(
                 SUBTITLES_POLL_SECONDS
-                if waiting
+                if waiting or view is not None
                 else SAVE_SECONDS
             )
 
@@ -588,6 +754,7 @@ def play_with_mpv(
     positions: Positions | None = None,
     subtitles: PendingSubtitles | None = None,
     streams: Streams | None = None,
+    live: bool = False,
 ) -> int:
     """
     Play audio through mpv's own terminal output.
@@ -596,6 +763,13 @@ def play_with_mpv(
     extraction. A stream mpv cannot load - sites turn one down now and then -
     falls back to the page URL, which mpv extracts for itself, so a refusal
     costs a retry rather than the run.
+
+    `live` is a broadcast, whose captions are reloaded as they are made:
+    mpv answers every reload by logging its whole track list - four lines
+    of terminal between the captions, every chunk - so playback's own
+    informational logging is turned down for one. Only that module: turning
+    every module down (`all=warn`) takes the terminal's subtitles with it,
+    and warnings and errors show either way.
     """
 
     mpv = mpv_path()
@@ -632,6 +806,12 @@ def play_with_mpv(
             "--cache=yes",
         ]
 
+        if live:
+
+            command.append(
+                "--msg-level=cplayer=warn"
+            )
+
         if streams is None:
 
             if stream:
@@ -639,7 +819,11 @@ def play_with_mpv(
                 command.extend(
                     [
                         "--ytdl=yes",
-                        "--ytdl-format=bestaudio/best",
+                        (
+                            f"--ytdl-format={LIVE_AUDIO_FORMAT}"
+                            if live
+                            else "--ytdl-format=bestaudio/best"
+                        ),
                     ]
                 )
 
@@ -711,6 +895,7 @@ def play_window(
     positions: Positions | None = None,
     subtitles: PendingSubtitles | None = None,
     streams: Streams | None = None,
+    live: bool = False,
 ) -> int:
     """
     Play video in an mpv window, with the subtitles we produced.
@@ -722,6 +907,12 @@ def play_window(
     extraction. A stream mpv cannot load - sites turn one down now and then -
     falls back to the page URL, which mpv extracts for itself, so a refusal
     costs a retry rather than the run.
+
+    `live` is a broadcast, whose captions are reloaded as they are made:
+    mpv answers every reload by logging its whole track list, so playback's
+    own informational logging is turned down for one. Only that module:
+    turning every module down (`all=warn`) takes the terminal's subtitles
+    with it, and warnings and errors show either way.
     """
 
     mpv = mpv_path()
@@ -755,6 +946,12 @@ def play_window(
             mpv,
             "--force-window=yes",
         ]
+
+        if live:
+
+            command.append(
+                "--msg-level=cplayer=warn"
+            )
 
         if streams is None:
 

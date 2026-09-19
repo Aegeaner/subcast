@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import signal
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import NamedTuple
 from . import captionbar, config, feeds, listing, meta, picker
 from .background import Background
 from .config import DEFAULT_WHISPER_MODEL, cache_dir, save_dir
+from .live import Capture, LiveCaptions
 from .media import acquire, download_audio, sanitize_filename
 from .player import Positions, play_window, play_with_mpv
 from .sources import Media, Source, default, detect
@@ -19,6 +21,7 @@ from .subtitles import (
     Prepared,
     cache_stem,
     has_transcript,
+    load_model,
     prepare,
 )
 
@@ -175,7 +178,8 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Download into ~/Videos/<source>/ instead of streaming, "
             "then stop (published captions and chapters are kept in the "
-            "cache; --subs transcribes where the source has none)."
+            "cache; --subs transcribes where the source has none). A live "
+            "broadcast is refused: it has no end to download up to."
         ),
     )
 
@@ -194,7 +198,8 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help=(
             "Prepare everything but do not start mpv; prints what was "
-            "written."
+            "written. A live broadcast is refused: its captions only "
+            "exist while it plays."
         ),
     )
 
@@ -225,9 +230,9 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help=(
             "Produce subtitles where the source publishes none, by "
-            "transcribing the audio locally. Captions the source already "
-            "has are used either way, so this is only needed for items "
-            "without published captions."
+            "transcribing the audio locally - on a live broadcast, as it "
+            "airs. Captions the source already has are used either way, "
+            "so this is only needed for items without published captions."
         ),
     )
 
@@ -756,13 +761,40 @@ def wants_subtitles(
     those cost a download where transcribing costs minutes of GPU. Asking
     for local transcription (`--subs-from asr`) is asking for subtitles
     too, and so is a transcript a previous run already left in the cache.
+
+    A broadcast is the exception: the captions it may publish are a
+    playlist that grows for as long as it airs, so they are not captions
+    this run can fetch - which leaves local transcription, and only when
+    this run asked for it. Nothing a previous run wrote down is right for
+    a stream that has not finished being made.
     """
+
+    if media.live:
+
+        return making_live_captions(args)
 
     return bool(
         args.subs
         or media.captions
         or args.subs_from == "asr"
         or has_transcript(media)
+    )
+
+
+def making_live_captions(
+    args: argparse.Namespace,
+) -> bool:
+    """
+    Whether this run transcribes a broadcast as it airs.
+    """
+
+    if args.subs_from == "published":
+
+        return False
+
+    return bool(
+        args.subs
+        or args.subs_from == "asr"
     )
 
 
@@ -802,14 +834,22 @@ def prepare_item(
     media: Media,
     args: argparse.Namespace,
     saved_path: Path | None,
-) -> Prepared | None:
+) -> Prepared | LiveCaptions | None:
     """
     Subtitles for one item, fetching audio only when they are generated
-    locally.
+    locally: a broadcast is transcribed as it plays instead, which is a job
+    rather than a file.
     """
 
     if not wants_subtitles(media, args):
         return None
+
+    if media.live:
+
+        return live_captions(
+            media,
+            args,
+        )
 
     audio_path = saved_path
 
@@ -836,6 +876,64 @@ def prepare_item(
         args.whisper_device,
         args.subs_from,
     )
+
+
+def live_captions(
+    media: Media,
+    args: argparse.Namespace,
+) -> LiveCaptions:
+    """
+    Captions for a broadcast, made while it plays.
+
+    A broadcast has no file to transcribe and no captions to fetch, so the
+    audio is taken from the stream itself, chunk by chunk, for as long as
+    the item is watched - which the player starts, because an item that is
+    prepared but never played has no broadcast to listen to.
+
+    The model is loaded here rather than by the job: loading it is what
+    prints, and a run drawing its own caption block cannot have that
+    happening underneath it.
+    """
+
+    return LiveCaptions(
+        cache_stem(media),
+        load_model(
+            args.whisper_model,
+            args.whisper_device,
+        ),
+        Capture(media.url),
+    )
+
+
+def stop_captions(
+    subtitles: PendingSubtitles | None,
+) -> None:
+    """
+    End the capture a broadcast's captions were coming from.
+
+    Playback is the only thing a live job exists for, so the run is what
+    says when it is over; the subtitles it wrote stay behind it.
+    """
+
+    if subtitles is None:
+
+        return
+
+    settled = (
+        subtitles.value()
+        if subtitles.done_yet()
+        else subtitles.wait()
+    )
+
+    if isinstance(settled, LiveCaptions):
+
+        settled.stop()
+
+        summary = settled.summary()
+
+        if summary is not None:
+
+            print(summary, flush=True)
 
 
 def needs_audio(
@@ -910,7 +1008,7 @@ def start_preparation(
     asking YouTube at once.
     """
 
-    def work() -> Prepared | None:
+    def work() -> Prepared | LiveCaptions | None:
 
         if after is not None:
 
@@ -1030,6 +1128,7 @@ def play_item(
                 warn_about_scale=args.subs_scale != "auto",
                 stream=media.stream,
                 positions=positions,
+                live=media.live,
             )
 
         return play_with_mpv(
@@ -1040,6 +1139,7 @@ def play_item(
             positions=positions,
             subtitles=subtitles,
             streams=streams,
+            live=media.live,
         )
 
     return play_window(
@@ -1051,7 +1151,32 @@ def play_item(
         positions=positions,
         subtitles=subtitles,
         streams=streams,
+        live=media.live,
     )
+
+
+def stop_signals() -> None:
+    """
+    Stop the way Ctrl-C does when the run is asked to end.
+
+    A run owns a broadcast's capture, and the two are separate process
+    groups: dying on a signal would leave yt-dlp and ffmpeg reading a
+    broadcast that nothing is watching. Raising what Ctrl-C raises means
+    the same paths end it as any other stop.
+    """
+
+    for name in ("SIGTERM", "SIGHUP"):
+
+        number = getattr(signal, name, None)
+
+        if number is not None:
+
+            signal.signal(number, _stop_requested)
+
+
+def _stop_requested(signum, frame) -> None:
+
+    raise KeyboardInterrupt
 
 
 def main() -> int:
@@ -1059,6 +1184,8 @@ def main() -> int:
     args = parse_args()
 
     try:
+
+        stop_signals()
 
         if args.feeds:
 
@@ -1189,6 +1316,36 @@ def main() -> int:
                     f"{len(media.segments)}"
                 )
 
+            if media.live:
+
+                print(
+                    "    Live broadcast: captions made as it plays"
+                    if making_live_captions(args)
+                    else "    Live broadcast: playing without captions"
+                )
+
+            if media.live and (args.save or args.no_play):
+
+                if args.save:
+
+                    # A broadcast has no end to download up to; it is an
+                    # ordinary video once it has one.
+                    print(
+                        "    A live broadcast cannot be saved while it "
+                        "airs; wait for the video of it.",
+                        flush=True,
+                    )
+
+                else:
+
+                    print(
+                        "    A broadcast is prepared by playing it; "
+                        "--no-play leaves nothing to do.",
+                        flush=True,
+                    )
+
+                continue
+
             saved_path = None
 
             if args.save:
@@ -1251,13 +1408,21 @@ def main() -> int:
                     after=subtitles,
                 )
 
-            status = play_item(
-                target.source,
-                item,
-                media,
-                args,
-                subtitles,
-            )
+            try:
+
+                status = play_item(
+                    target.source,
+                    item,
+                    media,
+                    args,
+                    subtitles,
+                )
+
+            finally:
+
+                # A broadcast's capture is playback's to keep alive, and
+                # nothing else knows when mpv has stopped playing it.
+                stop_captions(subtitles)
 
             if status != 0:
 

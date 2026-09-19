@@ -60,6 +60,10 @@ class Media:
     captions: tuple[Captions, ...] = ()
     segments: tuple[Segment, ...] = ()
 
+    # A broadcast, not a file: its captions have to be made while it airs,
+    # because there is no finished recording to work from.
+    live: bool = False
+
     @property
     def is_audio(self) -> bool:
         return self.kind == "audio"

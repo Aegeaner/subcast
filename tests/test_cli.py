@@ -55,6 +55,8 @@ def args(
         search=search,
         feed=feed,
         url=url,
+        whisper_model="small.en",
+        whisper_device="auto",
     )
 
 
@@ -641,3 +643,153 @@ def test_a_feed_plays_the_url_it_saved(monkeypatch):
 
     assert target.url == "https://www.youtube.com/@SkyNews"
     assert target.description.startswith("sky: ")
+
+
+def test_a_broadcast_is_only_captioned_when_asked_for_transcription():
+    """
+    The captions a broadcast publishes are a playlist that grows for as
+    long as it airs, which the caption fetch cannot read - so a live item
+    has subtitles only when this run asked for them, and
+    `--subs-from published` asked for the opposite.
+    """
+
+    live_item = replace(
+        media(captions=PUBLISHED),
+        live=True,
+    )
+
+    assert cli.wants_subtitles(live_item, args()) is False
+    assert cli.wants_subtitles(live_item, args(subs=True)) is True
+    assert cli.wants_subtitles(live_item, args(subs_from="asr")) is True
+    assert cli.wants_subtitles(live_item, args(subs=True, subs_from="published")) is False
+
+
+def test_a_broadcast_is_prepared_as_a_job_rather_than_a_file(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """
+    There is no transcript to write for a broadcast: what the run gets
+    back is the job that keeps making captions while it plays, writing
+    them where a finished video's transcript could never be mistaken for
+    them.
+    """
+
+    from subcast import config
+    from subcast.live import LiveCaptions
+
+    monkeypatch.setattr(cli, "load_model", lambda name, device: None)
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path / "cache")
+
+    live_item = replace(
+        media(captions=()),
+        live=True,
+    )
+
+    job = cli.prepare_item(live_item, args(subs=True), None)
+
+    assert isinstance(job, LiveCaptions)
+    assert job.srt_path.name == "abc.live.srt"
+    assert job.srt_path.parent == tmp_path / "cache" / "youtube"
+
+
+@pytest.mark.parametrize("flag", ["save", "no_play"])
+def test_a_broadcast_is_neither_saved_nor_prepared_without_playback(
+    flag: str,
+    monkeypatch,
+    capsys,
+):
+    """
+    Saving would record until the broadcast ends, and captions come from
+    playing it - so both are refused with a line rather than started.
+    """
+
+    import argparse as argparse_module
+
+    live_item = replace(media(), live=True)
+
+    monkeypatch.setattr(
+        cli,
+        "parse_args",
+        lambda: argparse_module.Namespace(
+            url="https://www.youtube.com/watch?v=abc",
+            list=False,
+            limit=None,
+            feed="",
+            search="",
+            feeds=False,
+            add_feed=False,
+            name="",
+            remove_feed="",
+            pick=False,
+            save=flag == "save",
+            no_play=flag == "no_play",
+            audio_only=False,
+            quality=1080,
+            subs=True,
+            subs_from="auto",
+            whisper_model="small.en",
+            whisper_device="auto",
+            subs_scale="auto",
+            subs_style="auto",
+            resume=True,
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "resolve_target",
+        lambda args: cli.Target(Source(), "abc", "abc"),
+    )
+    monkeypatch.setattr(cli, "collect", lambda source, url, limit: [live_item])
+    monkeypatch.setattr(cli, "resolve_item", lambda source, item: item)
+    monkeypatch.setattr(
+        cli,
+        "prepare_item",
+        lambda media, args, saved: pytest.fail("prepared a broadcast anyway"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "play_item",
+        lambda *args: pytest.fail("played a broadcast anyway"),
+    )
+
+    assert cli.main() == 0
+
+    output = capsys.readouterr().out
+
+    if flag == "save":
+
+        assert "cannot be saved while it airs" in output
+
+    else:
+
+        assert "--no-play leaves nothing to do" in output
+
+
+def test_a_stop_signal_ends_the_run_the_way_ctrl_c_does(monkeypatch):
+    """
+    A run owns a broadcast's capture, and the capture is its own process
+    group: dying on a signal would leave yt-dlp and ffmpeg reading a
+    broadcast that nothing is watching. SIGTERM and SIGHUP are turned into
+    what Ctrl-C raises, so the run's own teardown happens - which is what
+    stops the capture and removes its chunks.
+    """
+
+    installed: dict[int, object] = {}
+
+    monkeypatch.setattr(
+        cli.signal,
+        "signal",
+        lambda number, handler: installed.__setitem__(number, handler),
+    )
+
+    cli.stop_signals()
+
+    assert set(installed) == {
+        cli.signal.SIGTERM,
+        cli.signal.SIGHUP,
+    }
+
+    with pytest.raises(KeyboardInterrupt):
+
+        installed[cli.signal.SIGTERM](cli.signal.SIGTERM, None)

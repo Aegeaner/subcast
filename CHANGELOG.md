@@ -4,6 +4,51 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Live broadcasts** are captioned as they air. A YouTube broadcast has no
+  finished audio and usually no captions of its own, so `subcast <live url>
+  --subs` takes the audio from the stream itself - yt-dlp's cheapest format
+  carrying sound (a live item offers no audio-only one), cut into five-second
+  chunks by ffmpeg - and hears each chunk as it closes. Cues are written into
+  `<id>.live.srt`, which mpv gets as soon as the first ones are in it
+  (`sub-add`) and is told to read again each time it grows (`sub-reload`).
+
+  Where a caption belongs is decided when its chunk closes, from mpv's own
+  `demuxer-cache-time` - the position it has read up to, which is the audio
+  being captured at that moment - and carried with the chunk until it is heard,
+  so a slow machine costs delay rather than captions at a moment the broadcast
+  has gone past. Readings that outrun the clock (mpv filling its buffer at the
+  start of a run: 27 seconds of stream in 16 seconds, measured) are not a
+  timeline, and placing from one put the first chunk 13 seconds early, where
+  nothing showed it.
+
+  What is left unheard of a chunk is heard again in front of the next one, cut
+  where the captions stopped, so a sentence arriving across the join is not cut
+  in half; a cue from the last second and a half of a chunk waits for the next
+  pass, which hears it with the words after it, and a cue that starts before
+  what was already said is dropped. A pass is heard as soon as its chunk closes
+  (five seconds of broadcast in about 0.3s, measured with mpv playing), which
+  is what has to fit inside mpv's own ten-to-sixteen seconds of buffer: at
+  fifteen-second chunks it did not, and the first five seconds of every chunk
+  were written after the picture had gone past them. When transcription cannot
+  keep up at all, the oldest waiting chunks are dropped and the run says so
+  once. The run ends with what the captions came to (`Live captions: 14
+  chunk(s) heard`).
+
+  The partial captions never touch `.cues.json`, so they cannot be mistaken for
+  the transcript of the video the broadcast becomes, and `--save`/`--no-play`
+  are refused on a broadcast with a line each: there is no end to download up
+  to, and captions made while it airs cannot be made without it. A run asked to
+  stop - `Ctrl-C`, SIGTERM or SIGHUP - ends the capture with it: the reading and
+  cutting run in their own process groups, so dying outright would leave them
+  reading a broadcast that nothing is watching. Watching only the sound of one
+  asks for the cheapest format carrying it: a live item has no audio-only
+  format, so `bestaudio/best` was falling back to the whole 1080p stream
+  (5421k against 144p's 290k, measured on the same broadcast).
+
 ## [0.2.0] - 2026-09-19
 
 ### Added

@@ -114,6 +114,25 @@ subcast <url> --subs --whisper-model medium.en
 subcast <url> --subs --whisper-device cpu
 ```
 
+## Caption a live broadcast
+
+A broadcast has no finished audio to transcribe and usually publishes no
+captions of its own, so `--subs` makes them while it plays: the audio is taken
+from the stream, cut into chunks, and each chunk is transcribed as it closes.
+
+```
+subcast <url> --subs
+```
+
+The first captions appear about half a minute in, and after that each one
+follows the words by a few seconds. Watch at the live edge: pausing or seeking
+back leaves the captions behind, and returning to the live edge brings them
+back.
+
+A broadcast is refused two things, with a line each rather than a wait:
+`--save` has no end to download up to, and `--no-play` has nothing to prepare
+without playback.
+
 ## Save an item and its subtitles
 
 Download instead of watching, then stop:
