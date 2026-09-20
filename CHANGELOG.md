@@ -8,6 +8,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Acast shows, and The Irish Times podcasts.** A show published on Acast is
+  read as the feed it is published as, from either end. `shows.acast.com/<show>`
+  is Acast's own page for a show, and it links that feed; the slug in its path is
+  not the feed's own name - `inside-politics` is published as
+  `inside-politics-2`, `america-2026` as `irish-times-sport` - so the page is
+  read rather than the URL rewritten. A publisher's page links nothing: it
+  carries its episodes' audio, every card of one show plays from the same Acast
+  stream, and that stream's id is the show's, which is how
+  `subcast https://www.irishtimes.com/podcasts/in-the-news/` plays the show. A
+  page about several shows is refused with the feeds it holds rather than read as
+  one of them, and the "listen on" links every page of a site carries name one
+  other show, so they are not read either. Both ends are a podcast feed after
+  that, so `--list`, `--pick`, `--limit`, `--save`, `--audio-only`, `--subs` and
+  resume work as they do for any feed, and the show's episodes are the same items
+  whichever end they were reached through.
+
+- **BBC schedules.** `subcast https://www.bbc.com/audio/schedules/<service>`
+  lists the programmes a station puts out over a day, from the payload every page
+  of the audio site is rendered from: the day is one card's blocks, and an entry
+  states the programme it is a slot of, the time it airs and how long the slot
+  runs. An entry plays the programme's own on-demand audio, so `--pick`, `--save`
+  and `--subs` work as they do on a programme page, and the page names itself
+  after its station for `--add-feed`.
+
+### Fixed
+
+- **The version of a BBC programme that plays is the one BBC publishes for
+  download.** A programme that has aired lists the version it aired as first, and
+  the syndication URL every podcast client is served answers 404 for that one.
+  Measured across one Radio 4 day, 8 entries: every aired version tried answered
+  404, 4 of them list a podcast version that answers 200, 2 list one that answers
+  404 as well, and 2 list none. The podcast version is now preferred, so a
+  schedule entry plays instead of failing in the player. `hasOnDemand` on the
+  entry does not predict it: the entry for the programme that played carried
+  `false`.
+
 - **BBC Audio, Bloomberg podcasts and podcast feeds.** Three more sources, each
   reading what the publisher already states about an item rather than scraping a
   player.

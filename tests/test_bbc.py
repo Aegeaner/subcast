@@ -20,6 +20,7 @@ from subcast.sources.bbc import (
     SOURCE,
     episode_id,
     iso_seconds,
+    playable_version,
     stream_url,
 )
 
@@ -30,6 +31,8 @@ BRAND = "https://www.bbc.com/audio/brand/p0000001"
 CATEGORY = "https://www.bbc.com/audio/category/example"
 
 PLAY = "https://www.bbc.com/audio/play/p0000002"
+
+SCHEDULES = "https://www.bbc.com/audio/schedules/bbc_radio_example"
 
 PROGRAMME = bbc.PROGRAMME_API.format(pid="p0000002")
 
@@ -52,6 +55,13 @@ def play_page() -> str:
 
     return (
         FIXTURES / "bbc_play_page.html"
+    ).read_text(encoding="utf-8")
+
+
+def schedules_page() -> str:
+
+    return (
+        FIXTURES / "bbc_schedules_page.html"
     ).read_text(encoding="utf-8")
 
 
@@ -132,6 +142,23 @@ def programme_json(
                 "duration": 1589,
                 "types": ["Podcast version"],
             }
+        ]
+
+    if versions == "aired":
+
+        # what a programme that has aired lists: the version it aired as,
+        # and the one published for download beside it
+        versions = [
+            {
+                "pid": "v0000001",
+                "duration": 1590,
+                "types": ["Original version"],
+            },
+            {
+                "pid": "v0000002",
+                "duration": 1589,
+                "types": ["Podcast version"],
+            },
         ]
 
     return json.dumps(
@@ -417,6 +444,48 @@ def test_an_episode_bbc_offers_no_audio_for_says_so(monkeypatch):
     assert "no playable version" in str(error.value)
 
 
+def test_the_version_bbc_publishes_is_the_one_that_is_played(monkeypatch):
+    """
+    A schedule entry names a programme that has aired, whose first version
+    is the one it aired as - and the syndication URL answers 404 for that
+    one. The podcast version listed beside it is what a client is served.
+    """
+
+    monkeypatch.setattr(
+        bbc,
+        "fetch_text",
+        fake_fetch(
+            {
+                PLAY: play_page(),
+                PROGRAMME: programme_json("aired"),
+            }
+        ),
+    )
+
+    resolved = SOURCE.resolve(SOURCE.episodes(PLAY)[0])
+
+    assert resolved.url == stream_url("v0000002")
+    assert resolved.duration == 1589.0
+
+
+def test_a_programme_with_one_version_plays_that_one():
+    assert playable_version(
+        {
+            "versions": [
+                {
+                    "pid": "v0000003",
+                    "duration": 60,
+                }
+            ]
+        }
+    ) == (
+        "v0000003",
+        60.0,
+    )
+
+    assert playable_version({"versions": []}) is None
+
+
 def test_a_page_that_carries_no_listing_says_so(monkeypatch):
     monkeypatch.setattr(
         bbc,
@@ -450,6 +519,92 @@ def test_a_category_names_a_feed_after_itself(monkeypatch):
     assert SOURCE.listing_title(CATEGORY) == "Example"
 
 
+def test_a_schedules_page_lists_the_day_the_station_runs(monkeypatch):
+    """
+    A station's day is in the payload like any other listing, so reading
+    it is one request for the whole running order.
+    """
+
+    monkeypatch.setattr(
+        bbc,
+        "fetch_text",
+        fake_fetch({SCHEDULES: schedules_page()}),
+    )
+
+    items = SOURCE.episodes(SCHEDULES)
+
+    # the programme each part of the day is, in the order the day runs
+    assert [
+        item.title
+        for item in items
+    ] == [
+        "Example Programme",
+        "Example Segment",
+    ]
+
+    assert [
+        item.key
+        for item in items
+    ] == [
+        "p0000002",
+        "p0000007",
+    ]
+
+    assert [
+        item.url
+        for item in items
+    ] == [
+        PLAY,
+        "https://www.bbc.com/audio/play/p0000007",
+    ]
+
+    # the length is the slot's own, not the episode's
+    assert [
+        item.duration
+        for item in items
+    ] == [
+        1800.0,
+        240.0,
+    ]
+
+    assert all(
+        item.kind == "audio" and item.stream is False
+        for item in items
+    )
+
+
+def test_a_schedule_entry_plays_the_programme_it_names(monkeypatch):
+    monkeypatch.setattr(
+        bbc,
+        "fetch_text",
+        fake_fetch(
+            {
+                SCHEDULES: schedules_page(),
+                PROGRAMME: programme_json(),
+            }
+        ),
+    )
+
+    item = SOURCE.episodes(SCHEDULES, limit=1)[0]
+
+    resolved = SOURCE.resolve(item)
+
+    assert resolved.url == stream_url("v0000002")
+    assert resolved.key == "p0000002"
+    assert resolved.title == "The Example Episode"
+    assert resolved.referer == PLAY
+
+
+def test_a_schedules_page_names_a_feed_after_the_station(monkeypatch):
+    monkeypatch.setattr(
+        bbc,
+        "fetch_text",
+        fake_fetch({SCHEDULES: schedules_page()}),
+    )
+
+    assert SOURCE.listing_title(SCHEDULES) == "Example Radio"
+
+
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
@@ -457,6 +612,8 @@ def test_a_category_names_a_feed_after_itself(monkeypatch):
         ("https://www.bbc.co.uk/audio/brand/p0000001", True),
         ("https://www.bbc.com/audio/series/p0000004/", True),
         ("https://www.bbc.com/audio/category/example", True),
+        (SCHEDULES, True),
+        ("https://www.bbc.co.uk/audio/schedules/bbc_radio_example", True),
         (PLAY, True),
         # a page that lists no audio is not this source's
         ("https://www.bbc.com/news/articles/example", False),

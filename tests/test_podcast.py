@@ -15,6 +15,7 @@ from subcast.sources import podcast
 from subcast.sources.podcast import (
     SOURCE,
     duration_seconds,
+    feed_link,
     parse_feed,
 )
 
@@ -227,3 +228,28 @@ def test_something_that_is_not_xml_is_refused():
         parse_feed("<rss><channel><item>")
 
     assert "did not answer with a feed" in str(error.value)
+
+
+def test_the_feed_a_page_links_is_taken_from_the_page():
+    """
+    A source whose show page is the only thing naming its feed reads the
+    feed out of the page, which is what the page is for.
+    """
+
+    assert feed_link(
+        '<link type="application/rss+xml" rel="alternate" '
+        'href="https://example.test/podcast.rss" />'
+    ) == "https://example.test/podcast.rss"
+
+    # the attributes are in whatever order the page writes them
+    assert feed_link(
+        '<link href="https://example.test/podcast.rss" '
+        'type="application/rss+xml" />'
+    ) == "https://example.test/podcast.rss"
+
+
+def test_a_page_that_links_no_feed_says_so():
+    with pytest.raises(RuntimeError) as error:
+        feed_link("<html><head></head></html>")
+
+    assert "links no feed" in str(error.value)

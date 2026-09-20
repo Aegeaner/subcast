@@ -71,10 +71,10 @@ def build_parser() -> argparse.ArgumentParser:
             "Play or save an episode with subtitles: generated locally "
             "when the source publishes none, and shown as they play. "
             "Give it a URL (YouTube video, playlist or channel, a BBC "
-            "Audio page, a Bloomberg podcast, a podcast feed, or an "
-            "RTÉ Radio 1 programme or episode page), or give it no "
-            "arguments at all and it waits for commands (/help lists "
-            "them)."
+            "Audio page or schedule, a Bloomberg podcast, an Acast "
+            "show page, a podcast feed, or an RTÉ Radio 1 programme "
+            "or episode page), or give it no arguments at all and it "
+            "waits for commands (/help lists them)."
         )
     )
 
@@ -83,8 +83,9 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default="",
         help=(
-            "YouTube video, playlist or channel URL, a BBC Audio page, "
-            "a Bloomberg podcast series, a podcast feed, or an RTÉ "
+            "YouTube video, playlist or channel URL, a BBC Audio page or "
+            "schedule, a Bloomberg podcast series, an Acast show page or "
+            "a publisher's page it serves, a podcast feed, or an RTÉ "
             "Radio 1 programme or episode URL. Omit for the feed called "
             f"{feeds.DEFAULT_NAME!r}; no arguments at all opens the shell."
         ),
@@ -145,10 +146,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Save the URL as a feed: a YouTube playlist or channel, an "
-            "RTÉ programme, a BBC Audio programme or category, a "
-            "Bloomberg podcast series, or any podcast feed. Named by "
-            "--name or after the listing itself; a name that already "
-            "means another URL is refused rather than replaced."
+            "RTÉ programme, a BBC Audio programme, category or "
+            "schedule, a Bloomberg podcast series, an Acast show page "
+            "or a publisher's page it serves, or any podcast feed. "
+            "Named by --name or after the listing itself; a name that "
+            "already means another URL is refused rather than replaced."
         ),
     )
 

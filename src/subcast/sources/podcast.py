@@ -16,12 +16,25 @@ from hearing the audio, which is in pace with it by construction.
 
 from __future__ import annotations
 
+import re
+from html import unescape
 from urllib.parse import urlsplit
 from xml.etree import ElementTree
 
 from . import Media, fetch_text
 
 NAME = "podcast"
+
+# The feed a page links, for a source whose show page is read to find one.
+FEED_LINK_RE = re.compile(
+    r'<link[^>]*type="application/rss\+xml"[^>]*>',
+    re.IGNORECASE,
+)
+
+HREF_RE = re.compile(
+    r'href="([^"]+)"',
+    re.IGNORECASE,
+)
 
 # A URL that ends in one of these is a feed, and that is all most need:
 # the format is in the name.
@@ -94,6 +107,30 @@ def parse_feed(
     ]
 
     return _text(channel, "title"), items
+
+
+def feed_link(
+    page_html: str,
+) -> str:
+    """
+    The feed a page links.
+
+    A show page of a host that syndicates its shows states the feed it is
+    published as, which is the one thing about the show a page has to say
+    about its episodes.
+    """
+
+    for tag in FEED_LINK_RE.findall(page_html):
+
+        match = HREF_RE.search(tag)
+
+        if match:
+
+            return unescape(match.group(1))
+
+    raise RuntimeError(
+        "that show page links no feed to read"
+    )
 
 
 def feed_item(

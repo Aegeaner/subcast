@@ -172,12 +172,15 @@ def detect(
     The source that handles a URL.
     """
 
-    from . import bbc, bloomberg, podcast, rte, youtube
+    from . import acast, bbc, bloomberg, podcast, rte, youtube
 
     for source in (
         youtube.SOURCE,
         bbc.SOURCE,
         bloomberg.SOURCE,
+        # a show page on acast.com is taken for a feed by the host rule
+        # below, so the source that reads those pages is asked first
+        acast.SOURCE,
         podcast.SOURCE,
         rte.SOURCE,
     ):
@@ -197,12 +200,13 @@ def by_name(
     The source with this name, if it is one we know.
     """
 
-    from . import bbc, bloomberg, podcast, rte, youtube
+    from . import acast, bbc, bloomberg, podcast, rte, youtube
 
     for source in (
         youtube.SOURCE,
         bbc.SOURCE,
         bloomberg.SOURCE,
+        acast.SOURCE,
         podcast.SOURCE,
         rte.SOURCE,
     ):

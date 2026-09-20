@@ -12,10 +12,14 @@ Sources:
 
 - **YouTube** — videos, playlists, channels and live broadcasts. Subcast uses
   YouTube's own captions and chapters.
-- **BBC Audio** — a programme, a series, or a category of programmes. Subcast
-  reads what the page carries, and plays the version BBC syndicates.
+- **BBC Audio** — a programme, a series, a category of programmes, or a
+  station's schedule. Subcast reads what the page carries, and plays the
+  version BBC syndicates.
 - **Bloomberg podcasts** — a series page, read through the feed the show is
   published as.
+- **Acast shows** — Acast's page for a show, or a publisher's page whose
+  episodes it publishes, such as an Irish Times podcast. Subcast reads the feed
+  the show is published as.
 - **Podcast feeds** — any RSS feed whose items enclose audio, played from that
   audio.
 - **RTÉ Radio 1** — any programme page. Subcast reads the segment list RTÉ
@@ -140,11 +144,13 @@ subcast https://www.rte.ie/radio/radio1/this-week/
 `--pick` chooses from the episodes the page lists, and `--add-feed` saves the
 programme under its own name.
 
-**Play a podcast.** Pass a feed, a Bloomberg series page, or a BBC Audio page:
+**Play a podcast.** Pass a feed, a Bloomberg series page, a BBC Audio page, an
+Acast show page, or a publisher's podcast page:
 
 ```bash
 subcast https://www.bloomberg.com/podcasts/series/bloomberg-news-now
 subcast https://www.bbc.com/audio/brand/p002vsmz --subs
+subcast https://www.irishtimes.com/podcasts/in-the-news/
 ```
 
 A feed states the audio and its length, so a podcast plays from the file its
@@ -194,6 +200,6 @@ Subcast prints the path it wrote, under `~/Videos/<source>/`.
 Captions are generated on your machine. Nothing is uploaded and no analytics
 are collected.
 
-Subcast is not affiliated with RTÉ, YouTube, the BBC or Bloomberg, and is not
-endorsed by any of them. Licence:
+Subcast is not affiliated with RTÉ, YouTube, the BBC, Bloomberg, Acast or The
+Irish Times, and is not endorsed by any of them. Licence:
 [MIT](https://github.com/Aegeaner/subcast/blob/main/LICENSE).

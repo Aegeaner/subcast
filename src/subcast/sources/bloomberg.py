@@ -15,11 +15,10 @@ episodes, their audio, the transcripts published beside them - is what
 from __future__ import annotations
 
 import re
-from html import unescape
 from urllib.parse import urlsplit
 
 from . import fetch_text
-from .podcast import FeedSource
+from .podcast import FeedSource, feed_link
 
 NAME = "bloomberg"
 
@@ -36,17 +35,6 @@ SERIES_RE = re.compile(
 )
 
 SHOW_URL = "https://omny.fm/shows/{slug}"
-
-# The feed URL the show page publishes.
-FEED_LINK_RE = re.compile(
-    r'<link[^>]*type="application/rss\+xml"[^>]*>',
-    re.IGNORECASE,
-)
-
-HREF_RE = re.compile(
-    r'href="([^"]+)"',
-    re.IGNORECASE,
-)
 
 # How many items one request for the feed asks for: the feed states it,
 # so a run that needs one episode does not download a thousand.
@@ -72,26 +60,6 @@ def series_slug(
         )
 
     return match.group("slug").lower()
-
-
-def feed_link(
-    show_html: str,
-) -> str:
-    """
-    The feed a show page links.
-    """
-
-    for tag in FEED_LINK_RE.findall(show_html):
-
-        match = HREF_RE.search(tag)
-
-        if match:
-
-            return unescape(match.group(1))
-
-    raise RuntimeError(
-        "that show page links no feed to read"
-    )
 
 
 def sized(

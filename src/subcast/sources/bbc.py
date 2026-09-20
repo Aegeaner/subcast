@@ -1,10 +1,11 @@
 """BBC Audio: what a page lists, and the audio an episode plays from.
 
 Every page of the audio site is rendered from one document - the payload
-embedded in it - so a brand or series page lists its episodes and a
-category page lists the programmes it is a directory of. Reading that is
-one fetch for a whole listing, however many items it holds: nothing has
-to be asked about each episode.
+embedded in it - so a brand or series page lists its episodes, a
+category page lists the programmes it is a directory of, and a schedule
+lists the programmes a station puts out over a day. Reading that is one
+fetch for a whole listing, however many items it holds: nothing has to
+be asked about each episode.
 
 A page names an episode and its length but not the version of it the
 audio belongs to, which is what the syndication URL every podcast client
@@ -37,11 +38,11 @@ HOSTS = frozenset(
 )
 
 # What a page of the audio site can be: a programme (a brand), a series,
-# a category to browse, or one episode to play. Nothing else on the site
-# is audio.
+# a category to browse, one episode to play, or a station's schedule.
+# A schedule's id is a service, whose names carry an underscore.
 AUDIO_RE = re.compile(
-    r"^/audio/(?P<kind>brand|series|category|play)/"
-    r"(?P<id>[a-z0-9]+)/?$",
+    r"^/audio/(?P<kind>brand|series|category|play|schedules)/"
+    r"(?P<id>[a-z0-9_]+)/?$",
     re.IGNORECASE,
 )
 
@@ -66,6 +67,12 @@ STREAM_URL = (
     "https://open.live.bbc.co.uk/mediaselector/6/redir/version/2.0/"
     "mediaset/audio-nondrm-download-rss/proto/https/vpid/{vpid}.mp3"
 )
+
+# The version BBC publishes for download. A programme that has aired
+# lists the version it aired as, and a podcast version beside it where the
+# episode is published on demand; the syndication URL every client is
+# served carries the latter, and answers 404 for the former.
+PODCAST_TYPE = "podcast version"
 
 # How much of a programme one page carries: a listing deeper than this
 # asks for the pages it needs.
@@ -141,7 +148,8 @@ def page_items(
 
     A programme or series page lists episodes under its own card; a
     category page lists the programmes its sections are about; a single
-    episode page lists that one episode.
+    episode page lists that one episode; a station's schedule lists the
+    programme each part of its day is.
     """
 
     node = node_of(
@@ -194,6 +202,17 @@ def page_items(
                 if item is not None:
 
                     found.append(item)
+
+    for entry in schedule_entries(node):
+
+        item = schedule_media(
+            entry,
+            base,
+        )
+
+        if item is not None:
+
+            found.append(item)
 
     return dedupe(found)
 
@@ -265,6 +284,118 @@ def directory_media(
     )
 
 
+def section_cards(
+    node: dict,
+) -> list[dict]:
+    """
+    The cards a page's sections hold.
+
+    Everything a section renders is one card, whatever the section is
+    for: a category's directory, or the station a schedule runs under.
+    """
+
+    cards: list[dict] = []
+
+    for section in node.get("sections") or []:
+
+        if not isinstance(section, dict):
+
+            continue
+
+        for card in (section.get("model") or {}).get("blocks") or []:
+
+            if isinstance(card, dict):
+
+                cards.append(card)
+
+    return cards
+
+
+def schedule_entries(
+    node: dict,
+) -> list[dict]:
+    """
+    A station's day, in the order the day runs.
+
+    The day is not the page's contents but the entries under the card a
+    section draws for the station.
+    """
+
+    entries: list[dict] = []
+
+    for card in section_cards(node):
+
+        for entry in (card.get("model") or {}).get("blocks") or []:
+
+            if (
+                isinstance(entry, dict)
+                and isinstance(entry.get("episode"), dict)
+            ):
+
+                entries.append(entry)
+
+    return entries
+
+
+def schedule_media(
+    entry: dict,
+    base: str,
+) -> Media | None:
+    """
+    One programme a station puts out, as an item to play.
+
+    A schedule entry also carries the version it airs as, which is not
+    what an item plays - the version a listener is served comes out of
+    the programme's own JSON, the way it does for any episode of this
+    source.
+    """
+
+    episode = entry.get("episode") or {}
+
+    pid = str(episode.get("id") or "").strip()
+    path = str(episode.get("path") or "").strip()
+
+    if not pid or not path:
+
+        return None
+
+    return Media(
+        source=NAME,
+        key=pid,
+        title=schedule_title(entry) or pid,
+        url=urljoin(base, path),
+        kind="audio",
+        duration=iso_seconds(
+            str(episode.get("duration") or "")
+        ),
+        stream=False,
+    )
+
+
+def schedule_title(
+    entry: dict,
+) -> str:
+    """
+    What a schedule entry is, as the entry names it.
+
+    The entry's own title is the date it airs on when the station is
+    relaying something, so the programme it is a slot of - its brand -
+    is the useful name.
+    """
+
+    brand = entry.get("brand")
+
+    if isinstance(brand, dict):
+
+        title = str(brand.get("title") or "").strip()
+
+        if title:
+
+            return title
+
+    return str(entry.get("title") or "").strip()
+
+
 def card_duration(
     model: dict,
 ) -> float | None:
@@ -334,7 +465,7 @@ def page_title(
     A programme or series page names itself with its own card; an
     episode page names the programme the episode belongs to, and falls
     back to the episode when the card does not carry one; a category
-    page carries its own title.
+    page carries its own title, and a schedule the station it runs.
     """
 
     node = node_of(
@@ -364,7 +495,23 @@ def page_title(
 
         return str(model.get("title") or "").strip()
 
-    return str(node.get("title") or "").strip()
+    title = str(node.get("title") or "").strip()
+
+    if title:
+
+        return title
+
+    # A schedules page names itself on the card the day runs under, which
+    # is the station rather than the page.
+    for card in section_cards(node):
+
+        name = str(card.get("title") or "").strip()
+
+        if name:
+
+            return name
+
+    return ""
 
 
 def episode_id(
@@ -398,32 +545,58 @@ def stream_url(
     )
 
 
-def first_version(
+def version_types(
+    version: dict,
+) -> list[str]:
+    """
+    What a version says it is, so a type can be matched on.
+    """
+
+    return [
+        str(one).strip().lower()
+        for one in version.get("types") or []
+    ]
+
+
+def playable_version(
     programme: dict,
 ) -> tuple[str, float | None] | None:
     """
     The version of a programme that can be played, and how long it runs.
+
+    A programme that has aired lists the version it aired as first, and
+    the syndication URL every client is served does not carry that one:
+    where the episode is published on demand a podcast version is listed
+    beside it, and that is the one to play. A programme with one version -
+    or none the site types - plays the first it lists.
     """
 
-    versions = programme.get("versions")
+    versions = [
+        version
+        for version in programme.get("versions") or []
+        if isinstance(version, dict)
+    ]
 
-    if not isinstance(versions, list) or not versions:
-
-        return None
-
-    first = versions[0]
-
-    if not isinstance(first, dict):
+    if not versions:
 
         return None
 
-    vpid = str(first.get("pid") or "").strip()
+    chosen = next(
+        (
+            version
+            for version in versions
+            if PODCAST_TYPE in version_types(version)
+        ),
+        versions[0],
+    )
+
+    vpid = str(chosen.get("pid") or "").strip()
 
     if not vpid:
 
         return None
 
-    duration = first.get("duration")
+    duration = chosen.get("duration")
 
     return (
         vpid,
@@ -599,7 +772,7 @@ class Bbc:
 
         programme = self.programme(pid)
 
-        version = first_version(programme)
+        version = playable_version(programme)
 
         if version is None:
 

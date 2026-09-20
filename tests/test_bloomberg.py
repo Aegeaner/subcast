@@ -14,7 +14,6 @@ from subcast import cli, sources
 from subcast.sources import bloomberg
 from subcast.sources.bloomberg import (
     SOURCE,
-    feed_link,
     series_slug,
     sized,
 )
@@ -192,17 +191,6 @@ def test_a_url_that_is_not_a_series_page_is_refused():
         series_slug("https://www.bloomberg.com/news/articles/example")
 
     assert "/podcasts/series/" in str(error.value)
-
-
-def test_the_feed_a_show_page_links_is_taken_from_the_page():
-    assert feed_link(show_page()) == FEED
-
-
-def test_a_show_page_that_links_no_feed_says_so():
-    with pytest.raises(RuntimeError) as error:
-        feed_link("<html><head></head></html>")
-
-    assert "links no feed" in str(error.value)
 
 
 def test_a_feed_is_asked_for_the_count_that_is_wanted():

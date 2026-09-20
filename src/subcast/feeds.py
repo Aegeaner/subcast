@@ -2,10 +2,10 @@
 
 A feed here is a URL kept in the user's config directory so it plays by
 name instead of being pasted again: a YouTube channel or playlist, an RTÉ
-programme, a BBC Audio page, a Bloomberg series, or a podcast feed's own
-URL. What a feed is *not* is the source that reads it - the URL decides
-that, and the same source lists many programmes (Morning Ireland and This
-Week are both RTÉ) - so each one worth coming back to is a feed of its
+programme, a BBC Audio page, a Bloomberg series, an Acast show, or a podcast
+feed's own URL. What a feed is *not* is the source that reads it - the URL
+decides that, and the same source lists many programmes (Morning Ireland and
+This Week are both RTÉ) - so each one worth coming back to is a feed of its
 own, under a name of its own.
 
 `DEFAULT_NAME` is the feed a run with no URL opens, and the feed a machine

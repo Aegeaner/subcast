@@ -11,11 +11,12 @@ reasoning behind them, see the [explanation](explanation.md).
 subcast [url] [options]
 ```
 
-`url` is a YouTube video, playlist or channel, a BBC Audio page, a Bloomberg
-podcast series, a podcast feed, or an RTÉ Radio 1 programme or episode. If you
-omit it, subcast opens the feed called `morning`, which is the latest episode of
-RTÉ Morning Ireland. A machine whose feeds file has never been written is given
-that feed the first time a run needs one.
+`url` is a YouTube video, playlist or channel, a BBC Audio page or schedule, a
+Bloomberg podcast series, an Acast show page or a publisher's page it serves, a
+podcast feed, or an RTÉ Radio 1 programme or episode. If you omit it, subcast
+opens the feed called `morning`, which is the latest episode of RTÉ Morning
+Ireland. A machine whose feeds file has never been written is given that feed
+the first time a run needs one.
 
 Run subcast with no arguments at all and it opens its shell instead, reading
 commands from standard input until `/quit` or the end of it. The prompt prints
@@ -55,7 +56,7 @@ shell.
 | `--search QUERY` | Search YouTube instead of taking a URL. |
 | `--feed NAME` | Open a saved feed, by name or by its number in `--feeds`. With no URL, the feed called `morning` is the one opened. |
 | `--feeds` | List the saved feeds with the source each is read by, then stop. |
-| `--add-feed` | Save the URL as a feed: a YouTube playlist or channel, an RTÉ programme, a BBC Audio programme or category, a Bloomberg podcast series, or any podcast feed. Named by `--name`, or after the listing. A name that already means another URL is refused. |
+| `--add-feed` | Save the URL as a feed: a YouTube playlist or channel, an RTÉ programme, a BBC Audio programme, category or schedule, a Bloomberg podcast series, an Acast show page or a publisher's page it serves, or any podcast feed. Named by `--name`, or after the listing. A name that already means another URL is refused. |
 | `--name NAME` | The name `--add-feed` saves the feed under, which is the alias `--feed` asks for it by. |
 | `--remove-feed NAME` | Forget the feed called `NAME`. |
 | `--save` | Download into `~/Videos/<source>/` instead of streaming, then stop. |
@@ -83,7 +84,7 @@ shell.
 
 | Item | Path |
 | --- | --- |
-| `--save` output | `~/Videos/<source>/<title>.mp3` (RTÉ, BBC, Bloomberg and podcasts) or `.mp4` (YouTube) |
+| `--save` output | `~/Videos/<source>/<title>.mp3` (RTÉ, BBC, Bloomberg, Acast and podcasts) or `.mp4` (YouTube) |
 | Subtitles | `$XDG_CACHE_HOME/subcast/<source>/<id>.srt`, `<id>.chapters.txt` |
 | Broadcast captions | `$XDG_CACHE_HOME/subcast/<source>/<id>.live.srt`, written as the broadcast airs |
 | Cache | `$XDG_CACHE_HOME/subcast/<source>/<id>.mp3`, `.mp4`, `.cues.json`, `.segments.json`, `.meta.json` |
@@ -92,7 +93,7 @@ shell.
 | Feeds | `$XDG_CONFIG_HOME/subcast/feeds.json` |
 
 The cache is keyed by the item's own id: an episode UUID for RTÉ, a video id for
-YouTube, an episode id for BBC, a clip id for a podcast.
+YouTube, an episode id for BBC, and a clip id for a podcast or an Acast show.
 
 ## Cache lifetimes
 
@@ -109,7 +110,8 @@ YouTube, an episode id for BBC, a clip id for a podcast.
 
 | Source | Behaviour |
 | --- | --- |
-| `bbc` | A BBC Audio page: a programme, a series, a category, or one episode. Subcast reads the payload the page is rendered from, so a listing costs one request; the version the audio is addressed by comes from the programme's own JSON when an item is played, and the audio is the mp3 BBC syndicates. A category lists programmes, and an item that is a programme plays its newest episode. A programme page carries ten episodes at a time, and a deeper listing asks for the pages it needs. |
+| `acast` | A show published on Acast: Acast's own page for it (`shows.acast.com/<show>`), or a publisher's page whose episodes Acast serves, such as an Irish Times podcast. Acast's page links the feed the show is published as; a publisher's page names the show in the stream its own cards play from, and a page carrying more than one show is refused with the feeds it holds. Everything after that is a podcast feed. |
+| `bbc` | A BBC Audio page: a programme, a series, a category, a station's schedule, or one episode. Subcast reads the payload the page is rendered from, so a listing costs one request; the version the audio is addressed by comes from the programme's own JSON when an item is played, and that is the version BBC publishes for download. A category lists programmes, an item that is a programme plays its newest episode, and a schedule lists the programmes a station puts out over a day. A programme page carries ten episodes at a time, and a deeper listing asks for the pages it needs. |
 | `bloomberg` | A Bloomberg podcast series. Bloomberg's own pages refuse anything that is not a browser, so the show is read where it is hosted: its show page names the programme and links the feed it is syndicated as. Everything after that is a podcast feed. |
 | `podcast` | Any RSS feed whose items enclose audio. The enclosure is the audio and `itunes:duration` its length, and a resolve has nothing left to find. A transcript a feed publishes is not read: it is timed against the file the publisher made, which is not always the file that arrives (`--subs` hears the audio that plays). |
 | `rte` | Any RTÉ Radio 1 programme. Its page is a listing, and an episode URL is one item. Subcast reads the clip list and the programme's own schedule from the pages it fetches, and drives the RTÉ player in a headless browser for the stream URL, so an item of this source is never played from its page URL. Segment titles come from the clock times where the clip list carries them, and from the spoken words where it does not. A captioned episode plays the audio it was transcribed from, not a second fetch of the stream. |
