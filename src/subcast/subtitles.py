@@ -73,7 +73,13 @@ class GrowingCaptions:
 
     def cues(self) -> list[tuple[float, float, str]]:
         """
-        What has been said so far.
+        The captions to draw: what has been said so far, in the pieces a
+        caption line holds.
+
+        A source's own units are not what can be shown - the model hands
+        over sentences, a broadcast hears a chunk at a time - so what is
+        drawn is the laid-out form, the same cues the subtitle file holds
+        and mpv is given.
         """
 
         raise NotImplementedError
@@ -832,6 +838,10 @@ class HeardFile(GrowingCaptions):
         self._device = device
 
         self._lock = threading.Lock()
+
+        # What the model has said, and the same cues laid out into the
+        # pieces a caption line holds - which is what the file, the player
+        # and the block all read (`cues`).
         self._cues: list[tuple[float, float, str]] = []
         self._shown: list[tuple[float, float, str]] = []
         self._revision = 0
@@ -872,12 +882,18 @@ class HeardFile(GrowingCaptions):
 
     def cues(self) -> list[tuple[float, float, str]]:
         """
-        What has been said so far.
+        What has been said so far, as the subtitle file holds it.
+
+        The model hands over sentences rather than captions, and a long one
+        is cut into the pieces a line can hold (`_write` does it once per
+        cue, for the file). The block draws the same pieces: the sentence
+        itself would show its opening lines while the words being said are
+        further on, which reads as captions that do not match the audio.
         """
 
         with self._lock:
 
-            return list(self._cues)
+            return list(self._shown)
 
     def revision(self) -> int:
         """

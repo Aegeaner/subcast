@@ -223,6 +223,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A streamed item's captions were drawn from the wrong part of the
+  sentence.** The block was handed the model's segments as they came - a
+  sentence at a time - where the subtitle file, mpv, a broadcast's captions and
+  a replay all work from those segments split into the pieces a caption line
+  holds (`srt.split_cues`). A segment longer than the two lines the block shows
+  kept its opening on screen for its whole length and never reached its ending:
+  measured on one RTÉ episode, 452 of 682 segments (66%) do not fit the block
+  at 39 cells a line, and the longest one still showed "understand there are
+  different obligations on RTE in respect of the" while the words being spoken
+  were "broadcasting of Eurovision". The caption on screen stops matching the
+  audio, and further into a sentence the worse it is - pausing is what makes it
+  obvious rather than what causes it, which is how it was reported.
+  `subtitles.HeardFile.cues` now answers with the cues the file holds, so the
+  block, the file and mpv draw the same captions.
+
 - A published transcript is not captions. Omny's enclosure for one Bloomberg
   episode is served with ads stitched round the content - the first fetch of a
   session carried a pre-roll the next three did not, and the served file ran

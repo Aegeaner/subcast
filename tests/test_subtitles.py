@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 import requests
 
-from subcast import config, subtitles
+from subcast import captionbar, config, srt, subtitles
 from subcast.media import Ranged
 from subcast.sources import Captions, Media, youtube
 
@@ -461,6 +461,54 @@ def test_a_file_is_heard_while_it_plays(monkeypatch, tmp_path: Path):
     assert "The last thing said." in saved
     assert captioning.revision() > 1
     assert captioning.summary() is None
+
+    captioning.stop()
+
+
+def test_the_block_draws_the_piece_being_said_not_the_whole_sentence(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    The model hands over sentences, and a long one is cut into the pieces a
+    caption line holds - which is what the file, mpv and the block all
+    read. Drawing the sentence itself would show its opening lines while
+    the words being said are further on, which reads as captions that do
+    not match the audio.
+    """
+
+    said = (
+        "It was the kind of morning that made the whole town stop and look "
+        "at the sky, and nobody quite knew what to say about it, so they "
+        "said nothing at all until the rain came."
+    )
+
+    model = Hearing(
+        early=[Segment(0.0, 24.0, said)],
+        late=[],
+        duration=24.0,
+    )
+
+    captioning, item = heard(monkeypatch, tmp_path, model)
+
+    captioning.start()
+
+    assert wait_for(lambda: subtitles.has_transcript(item))
+
+    pieces = subtitles.split_cues([(0.0, 24.0, said)])
+
+    assert len(pieces) > 1
+
+    # the line drawn at the end of the sentence is the piece being said
+    # then, not the opening the whole sentence begins with
+    _title, _history, current = captionbar.frame(
+        captioning.cues(),
+        [],
+        22.0,
+        width=srt.LINE_WIDTH,
+    )
+
+    assert " ".join(current) == pieces[-1][2]
 
     captioning.stop()
 

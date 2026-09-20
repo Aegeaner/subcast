@@ -201,9 +201,10 @@ usually land within a minute of its slot.
 
 Captions are shaped for reading rather than for transcription. Subcast lays out
 the paragraph Whisper produces, then cuts it at line boundaries, so no cue
-spills past two 42-column lines and each piece gets its share of the cue's time.
-A cue with too little time for that, such as fast speech, is left whole instead
-of blinking in and out.
+spills past two 42-column lines and each piece gets its share of the cue's time,
+and the block draws those pieces rather than the paragraph they came from. A cue
+with too little time for that, such as fast speech, is left whole instead of
+blinking in and out.
 
 In the terminal, subcast draws a fixed five-row block: the segment title in dim
 cyan, the line before the current one dimmed, up to two lines of dialogue in
