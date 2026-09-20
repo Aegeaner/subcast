@@ -26,11 +26,6 @@ from ..media import sanitize_filename
 from ..segments import clip_clock_seconds
 from . import Media, Segment
 
-# The programme subcast plays when no URL is given.
-DEFAULT_SHOW_URL = (
-    "https://www.rte.ie/radio/radio1/morning-ireland/"
-)
-
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -1232,16 +1227,14 @@ class Rte:
         limit: int | None = None,
     ) -> list[Media]:
 
-        target = url or DEFAULT_SHOW_URL
-
-        if EPISODE_RE.search(target.rstrip("/")):
+        if EPISODE_RE.search(url.rstrip("/")):
 
             return [
                 Media(
                     source=self.name,
-                    key=episode_key(target, ""),
-                    title=programme_name(target),
-                    url=target,
+                    key=episode_key(url, ""),
+                    title=programme_name(url),
+                    url=url,
                     kind="audio",
                     stream=False,
                 )
@@ -1251,7 +1244,7 @@ class Rte:
 
         listing = http_get(
             session,
-            target,
+            url,
         )
 
         clock_start = scheduled_start(
@@ -1262,7 +1255,7 @@ class Rte:
 
         for episode_url, title, duration in find_episodes(
             listing.text,
-            target,
+            url,
             limit,
         ):
 
@@ -1275,7 +1268,7 @@ class Rte:
                         or fetched_title(
                             session,
                             episode_url,
-                            target,
+                            url,
                         )
                     ),
                     url=episode_url,

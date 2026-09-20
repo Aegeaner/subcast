@@ -85,7 +85,7 @@ The episode plays in the terminal, with captions drawn by subcast:
 
 ```
 [1/3] Finding items (rte):
-    latest
+    Morning Ireland: https://www.rte.ie/radio/radio1/morning-ireland/
     1 item(s)
 
 [2/3] Preparing:
@@ -126,6 +126,18 @@ subcast https://www.bbc.com/audio/brand/p002vsmz --subs
 A feed states the audio and its length, so a podcast plays from the file its
 publisher serves. Its captions are heard from that audio, the way they are for
 an RTÉ programme.
+
+**Keep a listing to come back to.** A channel, a programme or a podcast feed
+saves under a name you choose:
+
+```bash
+subcast https://www.rte.ie/radio/radio1/this-week/ --add-feed --name this-week
+subcast --feed this-week
+```
+
+`--feeds` lists what you saved and the source each one is read by, so a list
+that mixes a channel with a radio programme says which pipeline each goes
+through.
 
 **Choose from a long listing.** A channel or playlist holds more than one item,
 so ask for the listing and pick from it:

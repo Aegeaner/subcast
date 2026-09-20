@@ -1,9 +1,20 @@
 """Feeds: the listings worth coming back to, saved under a name.
 
-A feed here is a URL - today a YouTube playlist or channel - kept in the
-user's config directory so it can be played by name instead of pasted
-again. It is not a podcast feed: the point is a short list of the listings
-you follow, played through exactly the same pipeline as any other URL.
+A feed here is a URL kept in the user's config directory so it plays by
+name instead of being pasted again: a YouTube channel or playlist, an RTÉ
+programme, a BBC Audio page, a Bloomberg series, or a podcast feed's own
+URL. What a feed is *not* is the source that reads it - the URL decides
+that, and the same source lists many programmes (Morning Ireland and This
+Week are both RTÉ) - so each one worth coming back to is a feed of its
+own, under a name of its own.
+
+`DEFAULT` is the one feed that is built in: the listing a run with no URL
+opens. It is a feed like any other rather than a property of its source,
+because which programme opens by default is a fact about the user's
+habits, not about RTÉ.
+
+An RSS document is a feed in the other sense of the word. `sources.podcast`
+reads it, and saving one here saves a listing like any other.
 """
 
 from __future__ import annotations
@@ -22,6 +33,16 @@ class Feed:
 
     name: str
     url: str
+
+
+# The listing a run with no URL opens: Morning Ireland, the programme
+# subcast is built around. It lives here rather than on the RTÉ source
+# because a source is a pipeline, not a programme - and neither Morning
+# Ireland nor This Week belongs to it.
+DEFAULT = Feed(
+    name="Morning Ireland",
+    url="https://www.rte.ie/radio/radio1/morning-ireland/",
+)
 
 
 def load() -> list[Feed]:
@@ -110,21 +131,46 @@ def add(
     url: str,
 ) -> list[Feed]:
     """
-    Remember a URL under `name`, replacing whatever that name held.
+    Remember a URL under `name`.
+
+    A name that already means another URL is refused rather than quietly
+    replaced: a name is how a feed is asked for, the same show is often
+    published twice (a channel and the programme's own page), and a name
+    that starts meaning something else is how a run plays the wrong
+    thing. Removing the feed is how a name is made to mean this URL.
     """
 
-    feeds = [
-        feed
-        for feed in load()
-        if feed.name.lower() != name.lower()
-    ]
+    feeds = load()
 
-    feeds.append(
+    for feed in feeds:
+
+        if feed.name.lower() != name.lower():
+
+            continue
+
+        if feed.url == url:
+
+            return feeds
+
+        raise RuntimeError(
+            f"the feed {feed.name!r} already points at {feed.url}; "
+            "give this one another --name, or --remove-feed it first"
+        )
+
+    if name.strip().lower() == DEFAULT.name.lower():
+
+        raise RuntimeError(
+            f"{DEFAULT.name!r} is the built-in feed - the one a run with "
+            "no URL opens - so it is not a name to save this URL under; "
+            "give this one another --name"
+        )
+
+    feeds = feeds + [
         Feed(
             name=name,
             url=url,
         )
-    )
+    ]
 
     save(feeds)
 
@@ -148,6 +194,14 @@ def remove(
 
     if len(kept) == len(feeds):
 
+        if name.strip().lower() == DEFAULT.name.lower():
+
+            raise RuntimeError(
+                f"{DEFAULT.name!r} is the built-in feed, not one of the "
+                "saved ones: it is what a run with no URL opens, and "
+                "there is nothing to forget"
+            )
+
         raise RuntimeError(_no_such(name))
 
     save(kept)
@@ -160,20 +214,53 @@ def find(
 ) -> Feed:
     """
     The feed called `name`, by name or by the number --feeds prints.
+
+    A name is tried before a number, so a feed that is itself called "2"
+    is still findable by it. The built-in feed answers to its own name
+    like any other, which is why it can be opened on purpose and not only
+    by giving no URL at all.
     """
 
     feeds = load()
 
-    for number, feed in enumerate(feeds, start=1):
+    wanted = name.strip().lower()
 
-        if (
-            feed.name.lower() == name.lower()
-            or name == str(number)
-        ):
+    for feed in feeds:
+
+        if feed.name.lower() == wanted:
 
             return feed
 
+    if DEFAULT.name.lower() == wanted:
+
+        return DEFAULT
+
+    if wanted.isdigit() and 1 <= int(wanted) <= len(feeds):
+
+        return feeds[int(wanted) - 1]
+
     raise RuntimeError(_no_such(name))
+
+
+def source_of(
+    url: str,
+) -> str:
+    """
+    The name of the source that reads a URL, or "" when nothing does.
+
+    A feed outlives the source that serves it: a site can stop being
+    supported and a URL can be saved ahead of the source that will read
+    it, and neither is a reason for listing the feeds to fail.
+    """
+
+    from .sources import detect
+
+    try:
+
+        return detect(url).name
+
+    except RuntimeError:
+        return ""
 
 
 def title_for(
@@ -209,4 +296,4 @@ def title_for(
 def _no_such(
     name: str,
 ) -> str:
-    return f"no feed called {name!r}; --feeds lists the saved ones"
+    return f"no feed called {name!r}; --feeds lists the ones there are"

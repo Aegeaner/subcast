@@ -145,6 +145,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   against half an episode. Nothing is per-source: the resolve, the audio and the
   player are the same three steps for every one of them.
 
+- **A feed is a listing you saved, and nothing else.** Which source reads a feed
+  was never part of what was saved - the URL decides that - but the code let a
+  source own a programme: `sources.default()` answered with the RTÉ source and
+  Morning Ireland's URL attached to it, so "RTÉ" and "the programme that opens
+  by default" were one fact. The default is a feed now (`feeds.DEFAULT`, opened
+  through the same path a saved one takes), and the RTÉ source lists Morning
+  Ireland and This Week alike without owning either.
+
+  A name is the whole of how a feed is asked for, so saving one over a name that
+  already means another URL is refused rather than silently replacing it: the
+  same show is often published twice - a channel, and the programme's own page -
+  and two names are how the two are told apart. `--feeds` prints the source each
+  feed is read by, and says `?` for a URL nothing reads, which is what a feed
+  saved ahead of its source looks like; `--add-feed` prints the source it
+  detected; and `--feed` reaches the built-in Morning Ireland by name as well as
+  by being the run with no URL.
+
 ### Fixed
 
 - A published transcript is not captions. Omny's enclosure for one Bloomberg

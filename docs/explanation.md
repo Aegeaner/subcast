@@ -32,6 +32,30 @@ Three capabilities are looked up on the source object itself, with
 name is invisible to the pipeline. The other seam is `Media.stream`, which says
 who resolves the stream URL.
 
+## Sources, listings and items
+
+A **source** is a pipeline for one site: how a URL's items are listed, and how
+one of them becomes something playable. `youtube`, `rte`, `bbc`, `bloomberg` and
+`podcast` are the sources. The URL decides which one a run uses - hosts and path
+shapes do not overlap - so the choice is never the user's.
+
+A **listing** is a URL that points at items: a channel, a playlist, a programme,
+a series, a category, or a podcast feed. One source lists many of them, and the
+word a site uses for its own kind stays with the site: RTÉ and the BBC publish
+*programmes*, YouTube publishes *channels* and *playlists*, and an RSS document
+is a *feed*. None of that is a layer of the code, because nothing downstream
+asks what kind of listing produced an item - it asks the item, whose
+`Media.stream`, `Media.kind` and `Media.live` say who resolves it, what plays
+and whether it is a broadcast.
+
+A **feed**, as `--feed` and `--feeds` mean it, is a listing the user saved: a URL
+with the name it is asked for by. That name is the whole of how a feed is
+addressed, so a name that already means another URL is refused rather than
+replaced, and the list of feeds says which source reads each one. One feed is
+built in rather than saved: Morning Ireland is what a run with no URL opens, and
+it is a feed like any other rather than a property of the RTÉ source - that
+source lists Morning Ireland and This Week alike, and owns neither.
+
 ## Who resolves the stream
 
 Sources differ in one way, and most other differences follow from it.
@@ -295,11 +319,10 @@ are Apache-2.0, and mpv is a separate program, executed rather than linked.
 
 ## What is next
 
-Local files and arbitrary URLs as sources; podcast RSS feeds alongside saved
-YouTube listings and RTÉ programmes; per-source options such as cookies for
-age-restricted videos; and following a broadcast's own live caption playlist,
-which needs no GPU but the same growing-subtitle plumbing a broadcast's captions
-already have.
+Local files and arbitrary URLs as sources; an `--rss` surface for podcast feeds,
+which play by URL today; per-source options such as cookies for age-restricted
+videos; and following a broadcast's own live caption playlist, which needs no
+GPU but the same growing-subtitle plumbing a broadcast's captions already have.
 
 ## Notes for maintainers
 

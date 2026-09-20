@@ -120,27 +120,54 @@ Add `--pick` to choose from the results:
 subcast --search "morning ireland" --pick
 ```
 
-## Follow a channel or playlist as a feed
+## Keep a listing to come back to
 
-Save a listing you return to:
+Save a listing under a name, then open it by that name:
 
 ```bash
-subcast <url> --add-feed
-subcast <url> --add-feed --name bbc
+subcast https://www.youtube.com/@Channel4News --add-feed --name c4
+subcast https://www.rte.ie/radio/radio1/this-week/ --add-feed
+subcast --feed c4
 ```
 
-List the saved feeds, open one, or forget one:
+Any listing saves this way: a channel, a playlist, an RTÉ programme, a BBC Audio
+programme or category, a Bloomberg series, or a podcast feed's URL. The name is
+the alias you ask for it by. Without `--name`, the listing is named after itself,
+so the RTÉ page above gives `This Week`.
+
+List what you have saved, open one, or forget one:
 
 ```bash
 subcast --feeds
-subcast --feed bbc
 subcast --feed 2
-subcast --remove-feed bbc
+subcast --remove-feed c4
 ```
+
+`--feeds` prints the source each feed is read by, so a list that mixes a channel
+with a radio programme says which pipeline each one goes through:
+
+```
+    1. c4  youtube  https://www.youtube.com/@Channel4News
+    2. This Week  rte  https://www.rte.ie/radio/radio1/this-week/
+  built in: Morning Ireland  rte  https://www.rte.ie/radio/radio1/morning-ireland/
+```
+
+The same show is often published twice, as a channel and as a programme, and two
+names are how the two are told apart. A name that already means another URL is
+refused rather than quietly pointed somewhere else - subcast answers `the feed
+'c4' already points at <its url>` and saves nothing - so forget that feed first,
+or save this one under another `--name`.
 
 Opening a feed shows its newest entries as a menu. To play the newest entry
 without being asked, add `--no-pick`. Every other option works on a feed too:
 `--subs`, `--save`, `--audio-only` and resume.
+
+One feed is built in rather than saved. `Morning Ireland` is what a run with no
+URL opens, and it opens by name like any other:
+
+```bash
+subcast --feed "Morning Ireland"
+```
 
 ## Transcribe an item that has no captions
 

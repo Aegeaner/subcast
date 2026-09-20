@@ -211,13 +211,3 @@ def by_name(
             return source
 
     return None
-
-
-def default() -> Source:
-    """
-    The source used when no URL is given.
-    """
-
-    from . import rte
-
-    return rte.SOURCE

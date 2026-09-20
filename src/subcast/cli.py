@@ -15,7 +15,7 @@ from .config import DEFAULT_WHISPER_MODEL, cache_dir, save_dir
 from .live import Capture, LiveCaptions
 from .media import acquire, download_audio, find_cached_audio, sanitize_filename
 from .player import Positions, play_window, play_with_mpv
-from .sources import Media, Source, default, detect
+from .sources import Media, Source, detect
 from .subtitles import (
     GrowingCaptions,
     HeardWhilePlaying,
@@ -107,8 +107,9 @@ def parse_args() -> argparse.Namespace:
         metavar="NAME",
         default="",
         help=(
-            "Open a saved feed by name (or by its number in --feeds): "
-            "its entries are listed and you choose what to play."
+            "Open a saved feed by name (or by its number in --feeds), or "
+            "the built-in Morning Ireland: its entries are listed and "
+            "you choose what to play."
         ),
     )
 
@@ -125,7 +126,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--feeds",
         action="store_true",
-        help="List the saved feeds and exit.",
+        help=(
+            "List the saved feeds with the source each one is read by, "
+            "and the built-in one, then exit."
+        ),
     )
 
     parser.add_argument(
@@ -135,7 +139,8 @@ def parse_args() -> argparse.Namespace:
             "Save the URL as a feed: a YouTube playlist or channel, an "
             "RTÉ programme, a BBC Audio programme or category, a "
             "Bloomberg podcast series, or any podcast feed. Named by "
-            "--name or after the listing itself."
+            "--name or after the listing itself; a name that already "
+            "means another URL is refused rather than replaced."
         ),
     )
 
@@ -302,19 +307,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def source_for(
-    url: str,
-) -> Source:
-    """
-    The source that handles a URL, or the default one.
-    """
-
-    if not url:
-        return default()
-
-    return detect(url)
-
-
 def play_limit(
     args: argparse.Namespace,
 ) -> int:
@@ -388,6 +380,10 @@ def resolve_target(
 ) -> Target:
     """
     What to work on: a URL, a saved feed or a YouTube search.
+
+    With no URL at all it is the built-in feed, and it goes through the
+    same path a saved one does: which programme opens by default is a fact
+    about the feed, not about the source that reads it.
     """
 
     if args.search:
@@ -415,16 +411,39 @@ def resolve_target(
             f"{feed.name}: {feed.url}",
         )
 
+    if not args.url:
+
+        return Target(
+            detect(feeds.DEFAULT.url),
+            feeds.DEFAULT.url,
+            f"{feeds.DEFAULT.name}: {feeds.DEFAULT.url}",
+        )
+
     return Target(
-        source_for(args.url),
+        detect(args.url),
         args.url,
-        args.url or "latest",
+        args.url,
     )
+
+
+def feed_source(
+    url: str,
+) -> str:
+    """
+    The source a feed's URL is read by, or "?" when nothing reads it.
+    """
+
+    return feeds.source_of(url) or "?"
 
 
 def show_feeds() -> int:
     """
-    The saved feeds, in the order they were added.
+    The saved feeds in the order they were added, and the built-in one.
+
+    The source is not part of what was saved - the URL decides it - but a
+    list that mixes a channel with an audio programme says which pipeline
+    each one goes through, because what they have in common is only that
+    they are listings.
     """
 
     saved = feeds.load()
@@ -436,13 +455,17 @@ def show_feeds() -> int:
             "subcast <url> --add-feed"
         )
 
-        return 0
-
     for number, feed in enumerate(saved, start=1):
 
         print(
-            f"  {number:>3}. {feed.name}  {feed.url}"
+            f"  {number:>3}. {feed.name}  "
+            f"{feed_source(feed.url)}  {feed.url}"
         )
+
+    print(
+        f"  built in: {feeds.DEFAULT.name}  "
+        f"{feed_source(feeds.DEFAULT.url)}  {feeds.DEFAULT.url}"
+    )
 
     return 0
 
@@ -465,7 +488,7 @@ def remember_feed(
     feeds.add(name, args.url)
 
     print(
-        f"    Feed: {name}\n"
+        f"    Feed: {name} ({feed_source(args.url)})\n"
         f"    {args.url}",
         flush=True,
     )

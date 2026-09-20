@@ -930,6 +930,125 @@ def test_a_feed_plays_the_url_it_saved(monkeypatch):
     assert target.description.startswith("sky: ")
 
 
+def test_no_url_opens_the_built_in_feed(monkeypatch, tmp_path: Path):
+    """
+    Which programme opens by default is a fact about the feed, not about
+    the source: the source is decided by the URL, the same way it is for
+    any other feed.
+    """
+
+    monkeypatch.setattr(cli.config, "CONFIG_DIR", tmp_path)
+
+    source, url, description = cli.resolve_target(args())
+
+    assert url == cli.feeds.DEFAULT.url
+    assert source.name == "rte"
+    assert description.startswith(f"{cli.feeds.DEFAULT.name}: ")
+
+
+def test_two_programmes_of_one_source_are_two_feeds(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    RTÉ is the source; Morning Ireland and This Week are two feeds of it,
+    each with its own URL, and neither stands for the source.
+    """
+
+    monkeypatch.setattr(cli.config, "CONFIG_DIR", tmp_path)
+
+    cli.feeds.add(
+        "morning-ireland",
+        cli.feeds.DEFAULT.url,
+    )
+
+    cli.feeds.add(
+        "this-week",
+        "https://www.rte.ie/radio/radio1/this-week/",
+    )
+
+    morning = cli.resolve_target(args(feed="morning-ireland"))
+    week = cli.resolve_target(args(feed="this-week"))
+
+    assert morning.source.name == week.source.name == "rte"
+    assert morning.url != week.url
+
+
+def test_the_feed_list_says_which_source_reads_each_one(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    """
+    A channel and an audio programme are saved the same way, so the list
+    is where the two pipelines have to be told apart.
+    """
+
+    monkeypatch.setattr(cli.config, "CONFIG_DIR", tmp_path)
+
+    cli.feeds.add(
+        "c4",
+        "https://www.youtube.com/@Channel4News",
+    )
+
+    cli.feeds.add(
+        "this-week",
+        "https://www.rte.ie/radio/radio1/this-week/",
+    )
+
+    cli.show_feeds()
+
+    printed = capsys.readouterr().out
+
+    assert "1. c4  youtube  https://www.youtube.com/@Channel4News" in printed
+
+    assert (
+        "2. this-week  rte  https://www.rte.ie/radio/radio1/this-week/"
+        in printed
+    )
+
+    assert f"built in: {cli.feeds.DEFAULT.name}" in printed
+
+
+def test_a_feed_nothing_reads_is_still_listed(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    """
+    A feed outlives the source that served it, so listing them cannot be
+    listing the ones that still work.
+    """
+
+    monkeypatch.setattr(cli.config, "CONFIG_DIR", tmp_path)
+
+    cli.feeds.add(
+        "old",
+        "https://example.test/listings/9",
+    )
+
+    cli.show_feeds()
+
+    assert "old  ?  https://example.test/listings/9" in capsys.readouterr().out
+
+
+def test_saving_a_feed_says_which_source_reads_it(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    monkeypatch.setattr(cli.config, "CONFIG_DIR", tmp_path)
+
+    cli.remember_feed(
+        argparse.Namespace(
+            url="https://www.rte.ie/radio/radio1/this-week/",
+            name="this-week",
+        )
+    )
+
+    assert "Feed: this-week (rte)" in capsys.readouterr().out
+
+
 def test_a_broadcast_is_only_captioned_when_asked_for_transcription():
     """
     The captions a broadcast publishes are a playlist that grows for as

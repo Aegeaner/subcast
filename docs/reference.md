@@ -13,23 +13,24 @@ subcast [url] [options]
 
 `url` is a YouTube video, playlist or channel, a BBC Audio page, a Bloomberg
 podcast series, a podcast feed, or an RTÉ Radio 1 programme or episode. If you
-omit it, subcast works on the latest Morning Ireland.
+omit it, subcast opens its built-in feed: the latest episode of RTÉ Morning
+Ireland.
 
 ## Options
 
 | Option | Effect |
 | --- | --- |
-| `<url>` | The item, listing or programme to work on. Omitted: the latest RTÉ Morning Ireland. |
+| `<url>` | The item, listing or programme to work on. Omitted: subcast opens its built-in feed. |
 | `--list` | Print the listing and stop. |
 | `--limit N` | How many entries to play, newest first. Default `1`; `0` plays all. A menu shows the newest `SUBSCAST_LIMIT` (30 by default) unless `N` says otherwise. |
 | `--pick` | Print the listing and read a choice from it. |
 | `--no-pick` | Play the newest entry without asking. |
 | `--search QUERY` | Search YouTube instead of taking a URL. |
-| `--feed NAME` | Open a saved feed, by name or by its number in `--feeds`. |
-| `--feeds` | List the saved feeds and stop. |
-| `--add-feed` | Save the URL as a feed: a YouTube playlist or channel, an RTÉ programme, a BBC Audio programme or category, a Bloomberg podcast series, or any podcast feed. Named by `--name`, or after the listing. |
-| `--name NAME` | The name `--add-feed` saves the feed under. |
-| `--remove-feed NAME` | Forget the feed called `NAME`. |
+| `--feed NAME` | Open a saved feed, by name or by its number in `--feeds`. The built-in feed answers to its own name. |
+| `--feeds` | List the saved feeds with the source each is read by, and the built-in one, then stop. |
+| `--add-feed` | Save the URL as a feed: a YouTube playlist or channel, an RTÉ programme, a BBC Audio programme or category, a Bloomberg podcast series, or any podcast feed. Named by `--name`, or after the listing. A name that already means another URL is refused. |
+| `--name NAME` | The name `--add-feed` saves the feed under, which is the alias `--feed` asks for it by. |
+| `--remove-feed NAME` | Forget the feed called `NAME`. The built-in feed is not one of them. |
 | `--save` | Download into `~/Videos/<source>/` instead of streaming, then stop. |
 | `--no-play` | Prepare everything and start no player. |
 | `--audio-only` | Play the audio with terminal captions instead of video in a window. |
@@ -148,3 +149,5 @@ alone, so a stock mpv works.
 | `mpv could not load that stream; trying once more...` | The retry after exit status 2. |
 | `YouTube is rate-limiting this video's captions (HTTP 429); trying again in a few minutes usually works` | Every caption track was refused. |
 | `This terminal cannot render text at <n>x; captions stay at normal size.` | Scaled captions were requested on a terminal that cannot render them. |
+| `the feed '<name>' already points at <url>` | `--add-feed` was given a name another URL is saved under. Save under another `--name`, or remove that feed first. |
+| `'<name>' is the built-in feed` | The built-in feed, Morning Ireland, is not one of the saved ones, so there is nothing to save over it or to forget. |
