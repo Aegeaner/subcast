@@ -331,6 +331,24 @@ you read the code.
 - `cache-speed` measures what mpv chose to fetch, not what the link can do, so a
   bitrate policy cannot be sized on it. `paused-for-cache` is the honest signal
   that a stream cannot keep up.
+- The window title is built from `media-title`, which defaults to what play was
+  handed - a page URL, or the signed link a resolve found. Subcast forces the
+  item's name onto that property instead of setting `title`, so the window names
+  the episode and a user's own `title` template still formats it.
+- mpv's on-screen controller is the title bar of a window the compositor does
+  not decorate, and a compositor can decline to decorate one: GNOME on Wayland
+  advertises no `xdg-decoration`, and mpv draws no decoration of its own. The
+  controller also hides as soon as the mouse stops moving, which would take the
+  item's name off screen with it, so a run keeps it up - unless `--osc` asks for
+  mpv's own behaviour, or for no controller at all.
+- The controller is drawn at sizes mpv keeps for itself, and `osd-font-size` is
+  not what scales it: `osc-scalewindowed` and `osc-scalefullscreen` are, one for
+  each kind of window, so a run asks for both. Its caption-sized text is read at
+  a glance, which is why the captions a window draws are asked for bigger too.
+- The captions mpv draws over the picture are sized by `sub-font-size`, whose
+  default suits a stray subtitle rather than a run opened for its captions, so a
+  window run asks for a size of its own. The terminal paths draw their captions
+  in the terminal's font, where mpv's size says nothing.
 
 ## Privacy, licence and legal
 

@@ -32,6 +32,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `--subs` work as they do on a programme page, and the page names itself
   after its station for `--add-feed`.
 
+- **An mpv window names the item it is playing.** What mpv is handed is a URL -
+  the page, or the signed stream link a resolve found - and a window titles
+  itself after what it was handed, so a video played from a resolve showed a
+  googlevideo URL where its name belongs. The name the run prints is forced onto
+  mpv's `media-title`, which the window title is built from, so the episode is
+  named rather than the URL, and a user's own `title` setting still formats it.
+  Audio is named the same way for the surfaces mpv has that subcast does not,
+  the OSD in particular.
+
+### Changed
+
+- **A window keeps naming what it plays, and draws its captions and its own
+  controls bigger.** mpv's on-screen controller is the title bar of a window the
+  compositor does not decorate, and mpv hides it the moment the mouse stops, so
+  the name the run was given went off screen with it; a run now keeps it up
+  unless `--osc auto` or `--osc never` asks for something else. The controller is
+  drawn at a size of subcast's own rather than the small one mpv keeps for it
+  (`osc-scalewindowed` and `osc-scalefullscreen`, not `osd-font-size`), and the
+  subtitles mpv draws over the picture are asked for bigger too, because the
+  captions are what the item was opened for. Both are appended to `script-opts`
+  with `--script-opts-add`, so a user's own settings for other scripts are kept,
+  and the terminal paths are unaffected: their captions are drawn in the
+  terminal's font, not mpv's.
+
 ### Fixed
 
 - **A broadcast's captions are made from the pieces its playlist names, not

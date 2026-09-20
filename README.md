@@ -76,7 +76,9 @@ subcast https://youtu.be/<id>
 ```
 
 An mpv window opens. Captions the video publishes arrive on their own, usually
-within seconds and without using the GPU.
+within seconds and without using the GPU. The window names the item it plays
+rather than the URL it was fetched from, and keeps naming it for as long as it
+plays.
 
 **Open the shell.** Run subcast with no arguments at all and it waits for
 commands instead of playing anything:

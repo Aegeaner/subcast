@@ -21,7 +21,7 @@ from .media import (
     request_headers,
     sanitize_filename,
 )
-from .player import Positions, play_window, play_with_mpv
+from .player import OSC_VISIBILITY, Positions, play_window, play_with_mpv
 from .sources import Media, Source, detect
 from .subtitles import (
     GrowingCaptions,
@@ -241,6 +241,19 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Maximum video height for streaming and --save "
             "(default: 1080)."
+        ),
+    )
+
+    parser.add_argument(
+        "--osc",
+        choices=("always", "auto", "never"),
+        default=OSC_VISIBILITY,
+        help=(
+            "What mpv's on-screen controller does while a video plays. "
+            "It is the title bar of a window the compositor does not "
+            "decorate, and it names the item: kept on screen, shown on "
+            "mouse movement, or never drawn "
+            f"(default: {OSC_VISIBILITY})."
         ),
     )
 
@@ -1380,6 +1393,7 @@ def play_item(
             streams=streams,
             live=media.live,
             reloading=reloading,
+            title=media.title,
         )
 
     return play_window(
@@ -1393,6 +1407,8 @@ def play_item(
         streams=streams,
         live=media.live,
         reloading=reloading,
+        title=media.title,
+        osc=args.osc,
     )
 
 

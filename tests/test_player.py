@@ -36,6 +36,26 @@ def prepared() -> Prepared:
     )
 
 
+def osc_settings(command: list[str]) -> dict[str, str]:
+    """
+    The on-screen controller settings a command asks mpv for, as mpv reads
+    them: one `--script-opts-add` carrying `key=value` pairs.
+    """
+
+    for argument in command:
+
+        if not argument.startswith("--script-opts-add="):
+
+            continue
+
+        return dict(
+            pair.split("=", 1)
+            for pair in argument.split("=", 1)[1].split(",")
+        )
+
+    return {}
+
+
 def test_subtitles_that_are_not_ready_are_asked_about_again():
     release = threading.Event()
 
@@ -747,3 +767,126 @@ def test_only_the_sound_of_a_broadcast_is_asked_for(monkeypatch):
         in commands[0]
     )
     assert "--ytdl-format=bestaudio/best" in commands[1]
+
+
+def test_the_item_is_named_to_mpv_not_its_url(monkeypatch):
+    """
+    mpv titles its window after whatever it was handed, which is a signed
+    stream URL or a page, so the item's own name is forced onto
+    `media-title` - the property a user's own `--title` expands, and what
+    the OSD shows.
+    """
+
+    monkeypatch.setattr(player, "mpv_path", lambda: "mpv")
+
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        player,
+        "run_mpv",
+        lambda command, *args, **kwargs: commands.append(command) or 0,
+    )
+
+    player.play_window(
+        "https://example.test/watch",
+        title="The Morning After",
+    )
+    player.play_with_mpv(
+        "https://example.test/audio.mp3",
+        title="The Morning After",
+    )
+
+    assert "--force-media-title=The Morning After" in commands[0]
+    assert "--force-media-title=The Morning After" in commands[1]
+
+    # an item that has no name of its own leaves mpv to title itself
+    player.play_window("https://example.test/watch")
+
+    assert not any(
+        argument.startswith("--force-media-title")
+        for argument in commands[2]
+    )
+
+
+def test_the_window_keeps_naming_what_plays(monkeypatch):
+    """
+    mpv hides its on-screen controller, which is the title bar of a window
+    a compositor does not decorate, as soon as the mouse stops - so the
+    item's name goes with it. A run says what the controller does instead,
+    and the terminal paths have mpv's window turned off, so nothing is
+    asked of them.
+    """
+
+    monkeypatch.setattr(player, "mpv_path", lambda: "mpv")
+
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        player,
+        "run_mpv",
+        lambda command, *args, **kwargs: commands.append(command) or 0,
+    )
+
+    player.play_window("https://example.test/watch")
+    player.play_window(
+        "https://example.test/watch",
+        osc="auto",
+    )
+    player.play_with_mpv("https://example.test/audio.mp3")
+
+    assert (
+        osc_settings(commands[0])["osc-visibility"]
+        == player.OSC_VISIBILITY
+    )
+    assert osc_settings(commands[1])["osc-visibility"] == "auto"
+    assert osc_settings(commands[2]) == {}
+
+
+def test_the_window_draws_its_own_furniture_bigger(monkeypatch):
+    """
+    The controller is drawn at mpv's own sizes, which are small for the one
+    thing naming the item, and `--osd-font-size` is not what scales it:
+    `osc-scalewindowed` and `osc-scalefullscreen` are. A window can be made
+    fullscreen at any moment, so both are asked for.
+    """
+
+    monkeypatch.setattr(player, "mpv_path", lambda: "mpv")
+
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        player,
+        "run_mpv",
+        lambda command, *args, **kwargs: commands.append(command) or 0,
+    )
+
+    player.play_window("https://example.test/watch")
+
+    settings = osc_settings(commands[0])
+
+    assert settings["osc-scalewindowed"] == str(player.OSC_SCALE)
+    assert settings["osc-scalefullscreen"] == str(player.OSC_SCALE)
+
+
+def test_the_window_asks_for_captions_of_its_own_size(monkeypatch):
+    """
+    mpv draws the subtitles over the picture, at a size of its own choosing
+    unless a run says otherwise, and a captioned run is opened for them.
+    The terminal paths draw their captions in the terminal's own font, so
+    mpv's subtitle size has nothing to do with them.
+    """
+
+    monkeypatch.setattr(player, "mpv_path", lambda: "mpv")
+
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        player,
+        "run_mpv",
+        lambda command, *args, **kwargs: commands.append(command) or 0,
+    )
+
+    player.play_window("https://example.test/watch")
+    player.play_with_mpv("https://example.test/audio.mp3")
+
+    assert f"--sub-font-size={player.SUB_FONT_SIZE}" in commands[0]
+    assert not any(
+        argument.startswith("--sub-font-size")
+        for argument in commands[1]
+    )

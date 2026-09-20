@@ -45,6 +45,7 @@ def args(
     search: str = "",
     feed: str = "",
     url: str = "",
+    osc: str = "always",
 ) -> argparse.Namespace:
     return argparse.Namespace(
         subs=subs,
@@ -58,6 +59,7 @@ def args(
         url=url,
         audio_only=False,
         quality=1080,
+        osc=osc,
         subs_style="auto",
         subs_scale="auto",
         whisper_model="small.en",
@@ -508,6 +510,86 @@ def test_an_episode_nobody_captions_is_streamed(monkeypatch, tmp_path):
     assert played == ["https://example.test/audio.mp3"]
 
 
+def test_the_player_is_given_the_items_own_name(monkeypatch, tmp_path):
+    """
+    The item mpv is handed is a URL - a page, or the signed stream URL a
+    resolve found - so a window titled by mpv alone says the wrong thing.
+    What the run plays is named to it.
+    """
+
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
+
+    audio = args()
+    audio.audio_only = True
+
+    named: list[str] = []
+
+    monkeypatch.setattr(
+        cli,
+        "play_window",
+        lambda url, *rest, **kwargs: named.append(kwargs["title"]) or 0,
+    )
+    monkeypatch.setattr(
+        cli,
+        "play_with_mpv",
+        lambda url, *rest, **kwargs: named.append(kwargs["title"]) or 0,
+    )
+
+    item = replace(media(), title="The Morning After")
+
+    assert cli.play_item(Source(), item, item, args(), None) == 0
+    assert cli.play_item(Source(), item, item, audio, None) == 0
+
+    assert named == [
+        "The Morning After",
+        "The Morning After",
+    ]
+
+
+def test_the_window_is_told_what_the_controller_does(
+    monkeypatch,
+    tmp_path,
+):
+    """
+    Whether mpv's on-screen controller stays up is the user's to decide,
+    and it is the run that carries the decision to the player. An item
+    played in the terminal has no window and no controller to ask about.
+    """
+
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
+
+    asked: list[str] = []
+
+    monkeypatch.setattr(
+        cli,
+        "play_window",
+        lambda url, *rest, **kwargs: asked.append(kwargs["osc"]) or 0,
+    )
+    monkeypatch.setattr(
+        cli,
+        "play_with_mpv",
+        lambda url, *rest, **kwargs: pytest.fail(
+            "the terminal has no controller"
+        ),
+    )
+
+    item = media()
+
+    assert cli.play_item(Source(), item, item, args(), None) == 0
+    assert (
+        cli.play_item(
+            Source(),
+            item,
+            item,
+            args(osc="never"),
+            None,
+        )
+        == 0
+    )
+
+    assert asked == ["always", "never"]
+
+
 def test_the_next_item_is_prepared_while_this_one_plays(monkeypatch):
     """
     A feed or a playlist is watched one item after another, so the run
@@ -588,6 +670,7 @@ def test_a_listing_is_played_item_after_item(monkeypatch, tmp_path: Path):
             whisper_model="small.en",
             whisper_device="auto",
             subs_scale="auto",
+            osc="always",
             subs_style="auto",
             resume=True,
         ),
@@ -846,6 +929,7 @@ def test_an_item_must_be_resolved_and_heard_from_the_same_audio(
             whisper_model="small.en",
             whisper_device="auto",
             subs_scale="auto",
+            osc="always",
             subs_style="auto",
             resume=True,
         ),
@@ -1392,6 +1476,7 @@ def test_a_broadcast_is_neither_saved_nor_prepared_without_playback(
             whisper_model="small.en",
             whisper_device="auto",
             subs_scale="auto",
+            osc="always",
             subs_style="auto",
             resume=True,
         ),

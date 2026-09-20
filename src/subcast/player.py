@@ -49,6 +49,25 @@ LOAD_ERROR = 2
 # on the same stream.
 LIVE_AUDIO_FORMAT = "worstaudio/worst"
 
+# How big the captions are drawn over a video, in mpv's own unit for
+# `--sub-font-size`: the size in scaled pixels at a window height of 720,
+# which mpv scales with the window from there. mpv's default is 38, and the
+# captions are the reason the item was opened, so a run asks for more.
+SUB_FONT_SIZE = 64
+
+# What mpv's on-screen controller does while an item plays: kept on screen,
+# out of the way until the mouse moves, or not drawn at all. It is the title
+# bar of a window that has none - a compositor that does not decorate mpv
+# (GNOME on Wayland) draws no title, and mpv hides its own the moment the
+# mouse stops moving - so a run keeps it up and names the item with it.
+OSC_VISIBILITY = "always"
+
+# How much bigger mpv draws that controller (`osc-scalewindowed` and
+# `osc-scalefullscreen` multiply the sizes it draws itself with; its own
+# `--osd-font-size` is not what these are). Its title and clock are read at
+# a glance, so they are drawn a third larger, in step with the captions.
+OSC_SCALE = 1.33
+
 
 def retry_load_error(
     play: Callable[[], int],
@@ -792,6 +811,7 @@ def play_with_mpv(
     streams: Streams | None = None,
     live: bool = False,
     reloading: bool = False,
+    title: str | None = None,
 ) -> int:
     """
     Play audio through mpv's own terminal output.
@@ -810,6 +830,11 @@ def play_with_mpv(
     so playback's own informational logging is turned down for one. Only
     that module: turning every module down (`all=warn`) takes the
     terminal's subtitles with it, and warnings and errors show either way.
+
+    `title` names the item to mpv. Nothing a run draws itself shows it -
+    the captions are ours and the status line is off - so it is there for
+    the surfaces mpv has that we do not: the OSD, and the window title a
+    user's own settings build from `media-title`.
     """
 
     mpv = mpv_path()
@@ -852,6 +877,14 @@ def play_with_mpv(
 
             command.append(
                 "--msg-level=cplayer=warn"
+            )
+
+        if title is not None:
+
+            # What mpv would otherwise call the item is the URL it was
+            # handed, which for a resolved stream is a signed link.
+            command.append(
+                f"--force-media-title={title}"
             )
 
         if streams is None:
@@ -939,12 +972,18 @@ def play_window(
     streams: Streams | None = None,
     live: bool = False,
     reloading: bool = False,
+    title: str | None = None,
+    osc: str = OSC_VISIBILITY,
 ) -> int:
     """
     Play video in an mpv window, with the subtitles we produced.
 
     Terminal captions only make sense for audio: with video, mpv renders
-    them itself, over the picture, using the user's own mpv settings.
+    them itself, over the picture, and asks for `SUB_FONT_SIZE` rather than
+    mpv's own smaller default. `osc` is what mpv's on-screen controller
+    does - the title bar of a window a compositor does not decorate, which
+    draws the item's name that `title` forces onto `media-title` - and it is
+    drawn at `OSC_SCALE`.
 
     `streams` are the URLs our own resolve found, which save mpv the same
     extraction. A stream mpv cannot load - sites turn one down now and then -
@@ -956,6 +995,11 @@ def play_window(
     own informational logging is turned down for one. Only that module:
     turning every module down (`all=warn`) takes the terminal's subtitles
     with it, and warnings and errors show either way.
+
+    `title` names the item in the window instead of the URL mpv was handed
+    - a signed stream link, or a page - which is what the title bar would
+    otherwise show. It is forced onto `media-title`, so the title the
+    user's own `--title` builds from that property is what is drawn.
     """
 
     mpv = mpv_path()
@@ -990,12 +1034,31 @@ def play_window(
         command = [
             mpv,
             "--force-window=yes",
+
+            # Appended rather than set, so settings a user keeps for other
+            # scripts survive.
+            (
+                f"--script-opts-add=osc-visibility={osc},"
+                f"osc-scalewindowed={OSC_SCALE},"
+                f"osc-scalefullscreen={OSC_SCALE}"
+            ),
+
+            # mpv renders these captions itself, over the picture.
+            f"--sub-font-size={SUB_FONT_SIZE}",
         ]
 
         if live or reloading:
 
             command.append(
                 "--msg-level=cplayer=warn"
+            )
+
+        if title is not None:
+
+            # Without this the window is titled after the googlevideo URL
+            # a resolve found, or the page mpv is extracting.
+            command.append(
+                f"--force-media-title={title}"
             )
 
         if streams is None:

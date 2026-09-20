@@ -326,6 +326,18 @@ To hand the captions back to mpv instead of the block subcast draws:
 subcast --subs --subs-style osd
 ```
 
+To let mpv's on-screen controller hide again, or take it off the picture
+altogether:
+
+```bash
+subcast <url> --osc auto
+subcast <url> --osc never
+```
+
+The controller is the title bar of a window the compositor does not decorate,
+and it names the item, so subcast keeps it on screen by default. It draws bigger
+than mpv's own size, in step with the captions the window shows.
+
 Scaled captions need a terminal that renders them, such as kitty 0.40 or newer.
 On any other terminal subcast keeps them at normal size and says so.
 

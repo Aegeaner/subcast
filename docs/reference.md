@@ -63,6 +63,7 @@ shell.
 | `--no-play` | Prepare everything and start no player. |
 | `--audio-only` | Play the audio with terminal captions instead of video in a window. |
 | `--quality HEIGHT` | Maximum video height for streaming and `--save`. Default `1080`. |
+| `--osc {always,auto,never}` | What mpv's on-screen controller does while a video plays: kept on screen (default), shown when the mouse moves, or never drawn. It is the title bar of a window the compositor does not decorate, and it names the item. |
 | `--subs`, `--subtitles` | Transcribe the item locally where the source publishes no captions. The captions are heard from the audio the item plays - the stream itself, by range, when the site serves the same bytes to every request, and a copy downloaded first otherwise - and are written as they are heard: they appear while the item plays and keep ahead of it. A broadcast is heard from the pieces the playlist the player reads names, one at a time. On a live broadcast this is the only way it gets captions at all. |
 | `--subs-from {auto,published,asr}` | Where subtitles come from. Default `auto`. On a broadcast, `published` leaves it with none, because its captions have to be made. |
 | `--whisper-model MODEL` | The faster-whisper model used for transcription. Default `small.en`. |
@@ -149,6 +150,9 @@ alone, so a stock mpv works.
 | `cache-secs`, `demuxer-hysteresis-secs` | How much is buffered ahead. Deeper buffers ride out a poor connection; shallower ones start sooner. |
 | `ytdl`, `ytdl-format` | Subcast sets both for anything it streams, so a global setting applies only to videos you play outside subcast. |
 | `sub-auto`, `term-osd`, `term-status-msg` | Subcast sets these per run, so the terminal block owns the bottom rows. |
+| `sub-font-size` | Subcast asks for its own size on a run with video, because mpv draws those captions and its default is small for them. A run without video draws captions in the terminal's font, where mpv's size means nothing. |
+| `title` | Subcast forces the item's name onto `media-title`, which the window title is built from, so a window names the episode rather than the URL it plays. Your own `title` still formats it. |
+| `osc-visibility`, `osc-scalewindowed`, `osc-scalefullscreen` (in `script-opts`) | Subcast sets these for a window. mpv's on-screen controller is the title bar of a window the compositor does not decorate and it draws the item's name, so `--osc` decides what it does and a run draws it bigger. `osd-font-size` is not what sizes it. Set with `--script-opts-add`, so settings you keep for other scripts survive. |
 | `msg-level` | Subcast turns playback logging down to warnings for the player module while a broadcast plays, because every subtitle reload makes mpv log its whole track list. Other modules keep their level, and warnings and errors still show. |
 
 ## Exit statuses and messages
