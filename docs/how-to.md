@@ -245,11 +245,14 @@ local transcription:
 subcast <url> --subs
 ```
 
-The audio is what the captions are timed against, so it is fetched first - for a
-source whose stream URL comes out of a resolve, that is the wait before the
-first frame. The captions are then written as the model hears them and appear
-while the item plays: a file is heard faster than it plays, so they keep ahead
-of the picture rather than trailing it.
+Playback does not wait for a download. The player is handed the resolved stream
+and the model hears the same bytes as they arrive, a span at a time, so the first
+captions are on screen within seconds of the item starting and the rest are
+written as they are heard: a span is heard far faster than it plays, so the cues
+keep ahead of the picture rather than trailing it. An item whose site will not
+serve the same bytes to every request - one that stitches an ad into a request -
+is downloaded first instead, because captions timed against one copy of an item
+cannot be in pace with another.
 
 The transcript is cached once the whole file has been heard, so the next run
 reuses it. Ending the item first leaves the captions it heard and caches

@@ -11,6 +11,7 @@ import pytest
 import requests
 
 from subcast import config, subtitles
+from subcast.media import Ranged
 from subcast.sources import Captions, Media, youtube
 
 VTT = """WEBVTT
@@ -529,3 +530,172 @@ def test_a_hearing_that_fails_is_a_line_rather_than_the_end(
     assert failure is not None
     assert "no speech in that file" in failure
     assert "playing without them" in failure
+
+
+class StreamedHearing:
+    """
+    A model that takes a span's length from the bytes it was given, the way
+    decoding a span of a stream does, and names its cue after the span.
+    """
+
+    # bytes per second of the audio the tests serve
+    RATE = 10.0
+
+    def transcribe(self, path, **options):
+
+        seconds = len(Path(path).read_bytes()) / self.RATE
+
+        def stream():
+
+            # a word the cut went through the middle of: heard by the span
+            # on each side of it, and wanted by the second one only
+            yield Segment(0.5, 1.0, "the word the cut landed in")
+
+            yield Segment(
+                seconds / 2,
+                seconds / 2 + 1.0,
+                Path(path).name,
+            )
+
+        return stream(), SimpleNamespace(duration=seconds)
+
+
+def streaming(
+    monkeypatch,
+    tmp_path: Path,
+    body: bytes,
+    fetched=None,
+) -> tuple[subtitles.StreamedWhilePlaying, Media]:
+    """
+    An item being streamed into a cache of its own, with the spans served
+    out of `body` and the first span kept short enough to have several.
+    """
+
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(subtitles, "load_model", lambda name, device: StreamedHearing())
+    monkeypatch.setattr(subtitles, "FIRST_SPAN_BYTES", 50)
+
+    # the audio these tests serve is not audio: its length is the one the
+    # spans came to
+    monkeypatch.setattr(
+        subtitles,
+        "media_duration",
+        lambda path: len(body) / StreamedHearing.RATE,
+    )
+
+    def range_of(url, headers, first, last):
+
+        if fetched is not None:
+
+            fetched.append((first, last))
+
+        return body[first:last + 1]
+
+    monkeypatch.setattr(subtitles, "fetch_range", range_of)
+
+    item = Media(
+        source="rte",
+        key="one",
+        title="An episode",
+        url="https://example.test/one.mp3",
+        kind="audio",
+        duration=len(body) / StreamedHearing.RATE,
+    )
+
+    ranged = Ranged(
+        length=len(body),
+        opening=body[:1],
+        extension=".mp3",
+    )
+
+    return (
+        subtitles.StreamedWhilePlaying(
+            item,
+            item.url,
+            ranged,
+            {},
+            tmp_path / "rte" / "one",
+            "small.en",
+            "auto",
+        ),
+        item,
+    )
+
+
+def test_a_stream_is_heard_a_span_at_a_time(monkeypatch, tmp_path: Path):
+    """
+    An item that is still arriving is heard as it arrives: each span is
+    decoded and its cues placed where the audio before it ended, so they
+    belong to the copy the player is reading - and the bytes fetched are the
+    copy that is left on disk when the whole item has been heard.
+    """
+
+    body = bytes(512)
+    fetched: list[tuple[int, int]] = []
+
+    captioning, item = streaming(monkeypatch, tmp_path, body, fetched)
+
+    captioning.start()
+
+    assert wait_for(lambda: subtitles.has_transcript(item))
+
+    # the first span is 50 bytes (5 s at this rate) and the second is the
+    # rest of the item, fetched two seconds of it back to cover the cut
+    assert fetched == [(0, 49), (30, 511)]
+
+    assert [
+        (start, text)
+        for start, _end, text in captioning.cues()
+    ] == [
+        (0.5, "the word the cut landed in"),
+        (2.5, "00000.mp3"),
+        # 3.0 is where the second span starts (5.0 less the 2.0 overlap),
+        # so the cue at 3.5 is the half-word and is dropped
+        (27.1, "00001.mp3"),
+    ]
+
+    # what was fetched is the item, and it is named like a copy of it
+    assert (tmp_path / "rte" / "one.mp3").read_bytes() == body
+    assert not (tmp_path / "rte" / "one.mp3.part").exists()
+    assert captioning.summary() is None
+
+    captioning.stop()
+
+
+def test_a_stream_that_stops_early_keeps_nothing(monkeypatch, tmp_path: Path):
+    """
+    A run that ends before the item has arrived has no copy of it and no
+    transcript: the half-fetched audio goes with the run, and the next one
+    hears the item again.
+    """
+
+    body = bytes(512)
+    calls: list[int] = []
+
+    def broken(url, headers, first, last):
+
+        calls.append(first)
+
+        if len(calls) > 1:
+
+            raise RuntimeError("the stream stopped")
+
+        return body[first:last + 1]
+
+    captioning, item = streaming(monkeypatch, tmp_path, body)
+
+    monkeypatch.setattr(subtitles, "fetch_range", broken)
+
+    captioning.start()
+
+    assert wait_for(lambda: captioning.failure_message() is not None)
+
+    captioning.stop()
+
+    message = captioning.failure_message()
+
+    assert message is not None
+    assert "the stream stopped" in message
+
+    assert not subtitles.has_transcript(item)
+    assert list((tmp_path / "rte").iterdir()) == []

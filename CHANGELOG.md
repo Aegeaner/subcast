@@ -112,6 +112,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **A captioned item is heard from the stream while it plays instead of being
+  downloaded first.** The audio used to be fetched whole before the first frame,
+  because the captions have to belong to the copy that plays, and for a
+  two-hour episode that was the whole file in front of the picture. RTÉ's
+  resolved URL answers the same bytes to every request (measured: three fetches
+  of one episode with the first 2 MB byte-identical, the length and the opening
+  unchanged over 90 seconds, `Accept-Ranges: bytes`), so the player is handed
+  the URL and the model asks the same URL for the audio again, a span at a time
+  (`subtitles.StreamedWhilePlaying`): playback starts in seconds and captions
+  arrive within tens of seconds, written as each span is heard. What is fetched
+  is also written to the cache file, so a run ends holding the copy it heard,
+  and the transcript, the segments and the chapters are rendered from it once
+  the whole item has been heard.
+
+  A span is placed by what the model measured of the audio before it - the
+  model's own decode, not an estimate from the size of a byte range - and a
+  two-second overlap between spans keeps a word the cut went through the middle
+  of from being lost. An item whose URL fails the check - a different length or
+  opening on the second probe, as Bloomberg's host answers a podcast enclosure
+  with a pre-roll on some fetches - is downloaded whole first and heard from
+  that file, exactly as before: captions timed against one copy of an item
+  cannot be in pace with another. `--save` and `--no-play` runs, and items whose
+  audio is already on disk, keep the file path too, and a stream that was never
+  finished is deleted rather than left looking like a copy of the item.
+
 - **The default programme is an ordinary feed called `morning`, not a built-in
   one.** The feed a run with no URL opens used to be a record in the code: it
   was printed apart from the saved feeds, could not be removed, and would not

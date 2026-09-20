@@ -6,11 +6,50 @@ from pathlib import Path
 
 import pytest
 
+from subcast import media
 from subcast.media import (
     find_cached_audio,
     guess_audio_extension,
     sanitize_filename,
 )
+
+
+class Response:
+    """A response whose body is whatever the test says it is."""
+
+    def __init__(self, chunks) -> None:
+
+        self.headers = {"Content-Type": "audio/mpeg"}
+        self.url = "https://example.test/x.mp3"
+        self._chunks = chunks
+
+    def raise_for_status(self) -> None:
+
+        return None
+
+    def iter_content(self, chunk_size: int):
+
+        return self._chunks()
+
+    def __enter__(self):
+
+        return self
+
+    def __exit__(self, *exc) -> bool:
+
+        return False
+
+
+class Session:
+    """A session that answers with the response it was built around."""
+
+    def __init__(self, response: Response) -> None:
+
+        self._response = response
+
+    def get(self, *args, **kwargs) -> Response:
+
+        return self._response
 
 
 @pytest.mark.parametrize(
@@ -51,3 +90,36 @@ def test_cache_lookup_ignores_partial_and_subtitle_files(tmp_path: Path):
     assert find_cached_audio(tmp_path, key) == tmp_path / f"{key}.mp3"
     assert find_cached_audio(tmp_path, "other") is None
     assert find_cached_audio(tmp_path / "missing", key) is None
+
+
+def test_an_interrupted_download_leaves_nothing_behind(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """
+    A download nobody waited for is not wanted half-finished - a run that
+    played the stream instead of the audio it was hearing leaves nothing -
+    and what interrupted it is raised on unchanged.
+    """
+
+    def chunks():
+
+        yield b"x" * 1024
+
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        media.requests,
+        "Session",
+        lambda: Session(Response(chunks)),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+
+        media.download_audio(
+            "https://example.test/x.mp3",
+            tmp_path / "key",
+            {},
+        )
+
+    assert list(tmp_path.iterdir()) == []

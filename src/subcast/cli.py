@@ -13,7 +13,14 @@ from . import captionbar, config, feeds, listing, meta, picker, shell
 from .background import Background
 from .config import DEFAULT_WHISPER_MODEL, cache_dir, save_dir
 from .live import Capture, LiveCaptions
-from .media import acquire, download_audio, find_cached_audio, sanitize_filename
+from .media import (
+    acquire,
+    download_audio,
+    find_cached_audio,
+    range_probe,
+    request_headers,
+    sanitize_filename,
+)
 from .player import Positions, play_window, play_with_mpv
 from .sources import Media, Source, detect
 from .subtitles import (
@@ -21,6 +28,7 @@ from .subtitles import (
     HeardWhilePlaying,
     PendingSubtitles,
     Prepared,
+    StreamedWhilePlaying,
     cache_stem,
     has_transcript,
     load_model,
@@ -953,10 +961,11 @@ def captions_audio(
     source already publishes is transcribed from nothing, and one whose
     transcript is cached is not heard again, so neither fetches anything.
 
-    This is the one part of preparing that happens before playback, because
-    the audio is what plays: whatever a site serves on a second fetch -
-    RTÉ's ads, and Bloomberg's, stitched in per request - the captions
-    belong to the copy the run itself downloaded (`playback_url`).
+    This is the download a captioned play waits for when the item cannot be
+    heard from the stream instead (`streamed_captions`): the copies have to be
+    the same one, and a site that answers a second request with different
+    bytes - Bloomberg's host serves an enclosure with a pre-roll now and then -
+    leaves downloading first as the only way to be sure (`playback_url`).
     """
 
     if saved_path is not None:
@@ -976,14 +985,65 @@ def captions_audio(
 
         return cached
 
+    length = (
+        f" {format_duration(media.duration)}"
+        if media.duration
+        else ""
+    )
+
     print(
-        "    Downloading audio for transcription:",
+        f"    Fetching the audio to transcribe:{length}.",
         flush=True,
     )
 
     return acquire(
         media,
         cache_dir(media.source) / media.key,
+    )
+
+
+def streamed_captions(
+    media: Media,
+    args: argparse.Namespace,
+    saved_path: Path | None,
+) -> GrowingCaptions | None:
+    """
+    Captions for an item the player will read from its own URL, or None
+    when it has to be downloaded and heard from the file.
+
+    Two probes have to agree - the same length and the same opening bytes -
+    before anything is streamed: that is what says the copy the model hears
+    is the copy the player reads, which is the whole of what keeps cues in
+    pace with the picture (`media.range_probe`). A site that stitches ads
+    into a request answers a different length the second time, and an item
+    that is already on disk is not fetched again at all.
+    """
+
+    if saved_path is not None or not hears_the_audio(media, args):
+
+        return None
+
+    headers = request_headers(media)
+
+    ranged = range_probe(media.url, headers)
+
+    if ranged is None or ranged != range_probe(media.url, headers):
+
+        return None
+
+    print(
+        "    Captions are heard from the stream while it plays.",
+        flush=True,
+    )
+
+    return StreamedWhilePlaying(
+        media,
+        media.url,
+        ranged,
+        headers,
+        cache_dir(media.source) / media.key,
+        args.whisper_model,
+        args.whisper_device,
     )
 
 
@@ -1206,7 +1266,7 @@ def playback_url(
     subtitles: PendingSubtitles | None,
 ) -> str:
     """
-    What to play: the audio the subtitles were timed against when there is
+    What to play: the audio the captions were timed against when there is
     one, the stream URL otherwise.
 
     RTÉ stitches ads into an episode per request, measured: the same URL
@@ -1218,11 +1278,22 @@ def playback_url(
     plays.
 
     Nothing else changes: a run that is not captioned downloads nothing and
-    streams (`subtitles` is None), and a source whose URL is a page is
-    mpv's to resolve either way.
+    streams (`subtitles` is None), a source whose URL is a page is mpv's to
+    resolve either way, and captions heard from the stream itself
+    (`StreamedWhilePlaying`) belong to the stream.
     """
 
     if subtitles is None or media.stream:
+
+        return media.url
+
+    settled = (
+        subtitles.value()
+        if subtitles.done_yet()
+        else None
+    )
+
+    if isinstance(settled, StreamedWhilePlaying):
 
         return media.url
 
@@ -1618,24 +1689,40 @@ def run_once(
 
                 if watching and wants_subtitles(media, args):
 
-                    # What the captions are timed against is the audio, so
-                    # the audio is fetched before the first frame. The
-                    # transcript is not: it is made while the item plays and
-                    # attached when it lands, which is what a source mpv
-                    # resolves for itself already does.
-                    captions_audio(
+                    # Captions for something about to play are heard from
+                    # the bytes the player is reading whenever the site
+                    # serves the same ones to every request: the first frame
+                    # is seconds away and the model follows the stream a
+                    # span at a time. An item that cannot be heard that way
+                    # is downloaded whole first, because its captions have
+                    # to belong to the copy that plays.
+                    streamed = streamed_captions(
                         media,
                         args,
                         saved_path,
                     )
 
-                    subtitles = start_preparation(
-                        target.source,
-                        item,
-                        args,
-                        saved_path=saved_path,
-                        media=media,
-                    )
+                    if streamed is not None:
+
+                        subtitles = PendingSubtitles.finished(
+                            streamed
+                        )
+
+                    else:
+
+                        captions_audio(
+                            media,
+                            args,
+                            saved_path,
+                        )
+
+                        subtitles = start_preparation(
+                            target.source,
+                            item,
+                            args,
+                            saved_path=saved_path,
+                            media=media,
+                        )
 
                 else:
 

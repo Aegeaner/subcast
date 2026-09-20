@@ -123,11 +123,12 @@ Good morning again, this is Morning Ireland with Gavin Jennings
 and Sarah McInerney. We're here with you until nine...
 ```
 
-The audio is fetched first, because that is the copy the captions belong to,
-and then playback starts: the captions arrive while it plays, written as the
-model hears them, and mpv reads the file again each time it grows. Nothing waits
-for the whole transcription. The transcript is cached when it is complete, so
-later runs reuse it.
+Playback starts straight away, and the captions arrive while it plays: the
+model hears the audio as it streams, a span at a time, and mpv reads the caption
+file again each time it grows. Nothing waits for a download or for the whole
+transcription. An item its site will not serve in spans is downloaded first,
+because those captions have to belong to the copy that plays. The transcript is
+cached once the whole item has been heard, so later runs reuse it.
 
 **Play another RTÉ Radio 1 programme.** A programme page is a listing, so you
 can pass it the way you pass a channel URL:

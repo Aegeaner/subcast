@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -13,7 +15,7 @@ import requests
 from . import config
 from .background import Background
 from .chapters import write_chapters_file
-from .media import find_cached_audio, media_duration
+from .media import fetch_range, find_cached_audio, media_duration
 from .segments import (
     place,
     save_segments,
@@ -53,10 +55,11 @@ class GrowingCaptions:
     A source of them answers three questions - `start`, `cues` and
     `revision`, and `stop` when the play is over - and where it answers
     from is its own business: a broadcast being chunked as it airs
-    (`live.LiveCaptions`), or a file being heard (`HeardWhilePlaying`).
-    Playback drives either the same way: the subtitle file is handed to mpv
-    once and reloaded whenever `revision` changes, so a caption is on
-    screen as soon as it is written.
+    (`live.LiveCaptions`), a file being heard (`HeardWhilePlaying`), or an
+    item still arriving by range (`StreamedWhilePlaying`). Playback drives
+    either the same way: the subtitle file is handed to mpv once and
+    reloaded whenever `revision` changes, so a caption is on screen as soon
+    as it is written.
     """
 
     srt_path: Path
@@ -774,28 +777,41 @@ def render(
 FIRST_FLUSH_SECONDS = 8.0
 FLUSH_SECONDS = 30.0
 
+# How much of an item that is still arriving is fetched and heard at once.
+# The first span is a fixed small size, so that captions arrive while the
+# episode is still starting; what follows is a stretch of time, because the
+# rate the bytes arrive at is what the first span measures, and the model
+# hears a stretch of it far faster than the stretch plays.
+FIRST_SPAN_BYTES = 1_500_000
+SPAN_SECONDS = 300.0
+
+# How much of the end of a span is fetched again with the one after it, so a
+# word the cut went through the middle of is heard whole by one of them: a
+# span's cues are placed by where the model says the audio before it ended,
+# and the overlap is what keeps that boundary out of a word.
+SPAN_OVERLAP_SECONDS = 2.0
+
 # How long the hearing is given to come out of the stretch of audio it is in
 # when playback ends: it is the model's own decode of one window, and the
 # thread is a daemon, so waiting longer buys nothing.
 HEARING_STOP_SECONDS = 5.0
 
 
-class HeardWhilePlaying(GrowingCaptions):
+class HeardFile(GrowingCaptions):
     """
-    A file's captions, heard and written while it plays.
+    Captions heard from audio, written while the item plays.
 
-    The model hears a file faster than the file plays, so a cue can be
-    written as soon as the words after it have been heard and is then ahead
-    of the picture rather than behind it - which is the difference from a
-    broadcast, where the audio only exists as fast as it airs. mpv is given
-    the file once and reloads it as it grows, the same way a broadcast's
-    captions arrive.
+    The model hears faster than audio plays, so a cue is written as soon as
+    the words after it have been heard and is then ahead of the picture
+    rather than behind it. What differs between the ways of hearing is only
+    where the audio comes from, so that is what a subclass says
+    (`_stretches`): a file that was downloaded first is one stretch, and an
+    item still arriving is a span at a time.
 
-    The transcript, the segments and the chapters are written when the
-    whole file has been heard, so a replay is as cheap as any other. A run
-    that ends first keeps the captions it heard and caches nothing: the
-    next run hears the file again rather than play against a transcript of
-    half an episode.
+    The artifacts are written once the whole item has been heard, so a
+    replay is as cheap as any other. A run that ends first keeps the
+    captions it heard and caches nothing: the next run hears the audio again
+    rather than play against a transcript of half an episode.
     """
 
     def __init__(
@@ -822,7 +838,11 @@ class HeardWhilePlaying(GrowingCaptions):
         self._failure: str | None = None
         self._notes: list[str] = []
 
+        # How far the hearing has got, in the item's own timeline: what the
+        # model has decoded (`_covered`) and what the cues have reached
+        # (`_heard`), against how long the item is (`_total`).
         self._heard = 0.0
+        self._covered = 0.0
         self._total = 0.0
         self._complete = False
 
@@ -904,7 +924,7 @@ class HeardWhilePlaying(GrowingCaptions):
 
     def summary(self) -> str | None:
         """
-        What the captions came to, when the file was not heard to its end.
+        What the captions came to, when the item was not heard to its end.
         """
 
         with self._lock:
@@ -937,7 +957,7 @@ class HeardWhilePlaying(GrowingCaptions):
 
     def _work(self) -> None:
         """
-        Hear the file, writing the captions as they are heard.
+        Hear the audio, writing the captions as they are heard.
         """
 
         try:
@@ -950,9 +970,18 @@ class HeardWhilePlaying(GrowingCaptions):
 
                 self._failure = str(exc)
 
+    def _stretches(self) -> Iterator[tuple[Path, float, float]]:
+        """
+        The audio to hear, in the order it plays: the file to hear, where
+        it starts in the item, and the point before which its cues belong to
+        the stretch before it and are dropped.
+        """
+
+        raise NotImplementedError
+
     def _hear(self) -> None:
         """
-        The model over the file, one stretch of captions at a time.
+        Hear the audio, a stretch at a time, and settle when it is all in.
         """
 
         model = load_model(
@@ -960,60 +989,21 @@ class HeardWhilePlaying(GrowingCaptions):
             self._device,
         )
 
-        stream, info = _stream(
-            model,
-            self._audio,
-        )
-
-        with self._lock:
-
-            self._total = float(info.duration or 0.0)
-
         said: list[tuple[float, float, str]] = []
 
-        next_flush = FIRST_FLUSH_SECONDS
-        reported = -1
-
-        for segment in stream:
+        for audio, offset, cut in self._stretches():
 
             if self._stopping.is_set():
 
                 return
 
-            text = segment.text.strip()
-
-            if text:
-
-                said.append(
-                    (
-                        float(segment.start),
-                        float(segment.end),
-                        text,
-                    )
-                )
-
-            end = float(segment.end)
-
-            if end >= next_flush:
-
-                next_flush = end + FLUSH_SECONDS
-
-                self._write(said)
-
-            minute = int(end // 60)
-
-            if (
-                minute != reported
-                and self._total
-            ):
-
-                reported = minute
-
-                self._note(
-                    f"    Heard {minute} min / "
-                    f"{self._total / 60:.0f} min "
-                    f"({end / self._total * 100:.0f}%)"
-                )
+            self._hear_one(
+                model,
+                audio,
+                offset,
+                cut,
+                said,
+            )
 
         if not said:
 
@@ -1043,6 +1033,87 @@ class HeardWhilePlaying(GrowingCaptions):
             said,
             self._audio,
         )
+
+        self._settled()
+
+    def _settled(self) -> None:
+        """
+        What to do once the whole item has been heard and rendered, which is
+        nothing unless the audio was still arriving when it began.
+        """
+
+    def _hear_one(
+        self,
+        model,
+        audio: Path,
+        offset: float,
+        cut: float,
+        said: list[tuple[float, float, str]],
+    ) -> None:
+        """
+        Hear one stretch of audio, adding its cues to what has been said.
+
+        The cues are timed from where the stretch starts - `offset`, and
+        what the model says they are within the stretch - so a stretch of a
+        stream is placed by the audio before it rather than by an estimate
+        of how many seconds a byte range holds.
+        """
+
+        stream, info = _stream(
+            model,
+            audio,
+        )
+
+        covered = offset + float(info.duration or 0.0)
+
+        with self._lock:
+
+            self._total = max(self._total, covered)
+            self._covered = max(self._covered, covered)
+
+        next_flush = offset + FIRST_FLUSH_SECONDS
+        reported = -1
+
+        for segment in stream:
+
+            if self._stopping.is_set():
+
+                return
+
+            start = offset + float(segment.start)
+            end = offset + float(segment.end)
+            text = segment.text.strip()
+
+            if text and start >= cut:
+
+                said.append(
+                    (
+                        start,
+                        end,
+                        text,
+                    )
+                )
+
+            if end >= next_flush:
+
+                next_flush = end + FLUSH_SECONDS
+
+                self._write(said)
+
+            minute = int(end // 60)
+
+            if (
+                minute != reported
+                and self._total
+            ):
+
+                reported = minute
+
+                self._note(
+                    f"    Heard {minute} min / "
+                    f"{self._total / 60:.0f} min "
+                    f"({end / self._total * 100:.0f}%)"
+                )
 
     def _write(
         self,
@@ -1088,3 +1159,192 @@ class HeardWhilePlaying(GrowingCaptions):
         with self._lock:
 
             self._notes.append(line)
+
+
+class HeardWhilePlaying(HeardFile):
+    """
+    A file's captions, heard and written while it plays: the audio is in
+    hand, so the model hears it in one pass.
+    """
+
+    def _stretches(self) -> Iterator[tuple[Path, float, float]]:
+
+        yield self._audio, 0.0, 0.0
+
+
+class StreamedWhilePlaying(HeardFile):
+    """
+    Captions for an item that is still arriving.
+
+    The player is handed the URL, so the first frame is seconds away, and
+    the model hears the bytes the player is reading by asking the server for
+    them again - a span at a time, by HTTP range, which the item was probed
+    for before any of this (`media.range_probe`). What is fetched is also
+    written to the audio file, so a run ends holding the copy it heard and
+    the artifacts are rendered from it like any other.
+
+    What this rests on is a site serving the same bytes to every request: an
+    item whose second probe answers a different length - an ad stitched into
+    one of them - is downloaded whole first instead, because captions timed
+    against one copy of an item cannot be in pace with another.
+    """
+
+    def __init__(
+        self,
+        media,
+        url: str,
+        ranged,
+        headers: dict[str, str],
+        audio_stem: Path,
+        model_name: str,
+        device: str,
+    ) -> None:
+
+        super().__init__(
+            media,
+            audio_stem.with_name(
+                audio_stem.name + ranged.extension + ".part"
+            ),
+            model_name,
+            device,
+        )
+
+        self._url = url
+        self._length = ranged.length
+        self._headers = headers
+
+        # The page's own figure for the item, until the audio says better:
+        # it is what the progress lines are shown against.
+        self._total = float(media.duration or 0.0)
+
+        self._fetched = 0
+        self._rate = 0.0
+        self._spans: Path | None = None
+
+    def stop(self) -> None:
+        """
+        Stop hearing, keeping the captions it wrote.
+
+        The bytes of a fetch that never finished are not a copy of the item
+        and are dropped with the spans: the transcript is not cached either,
+        so a later run hears the item again.
+        """
+
+        super().stop()
+
+        with self._lock:
+
+            complete = self._complete
+
+        if not complete:
+
+            self._audio.unlink(missing_ok=True)
+
+        if self._spans is not None:
+
+            shutil.rmtree(
+                self._spans,
+                ignore_errors=True,
+            )
+
+    def _stretches(self) -> Iterator[tuple[Path, float, float]]:
+        """
+        Fetch a span of the item, write it down, and say where it belongs.
+
+        A span that is heard has already been fetched when the next one is
+        asked for, so the size of a request is set by how long a stretch of
+        audio takes to hear (the first is a fixed size, because the rate the
+        bytes come at is what the first heard span measures).
+        """
+
+        spans = Path(
+            tempfile.mkdtemp(
+                prefix="subcast-span-"
+            )
+        )
+
+        self._spans = spans
+
+        self._audio.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        number = 0
+
+        while self._fetched < self._length:
+
+            if self._stopping.is_set():
+
+                return
+
+            self._rate = (
+                self._fetched / self._covered
+                if self._covered
+                else 0.0
+            )
+
+            overlap = int(
+                SPAN_OVERLAP_SECONDS * self._rate
+            )
+
+            first = max(0, self._fetched - overlap)
+
+            wanted = (
+                FIRST_SPAN_BYTES
+                if not self._rate
+                else int(SPAN_SECONDS * self._rate)
+            )
+
+            last = min(
+                self._length - 1,
+                first + wanted - 1,
+            )
+
+            body = fetch_range(
+                self._url,
+                self._headers,
+                first,
+                last,
+            )
+
+            span = spans / f"{number:05d}.mp3"
+
+            span.write_bytes(body)
+
+            # The overlap is already in the file: it was the end of the span
+            # before this one.
+            with self._audio.open("ab") as audio:
+
+                audio.write(
+                    body[self._fetched - first:]
+                )
+
+            self._fetched = first + len(body)
+            number += 1
+
+            overlap_seconds = (
+                overlap / self._rate
+                if self._rate
+                else 0.0
+            )
+
+            yield (
+                span,
+                max(0.0, self._covered - overlap_seconds),
+                self._covered,
+            )
+
+            span.unlink(missing_ok=True)
+
+    def _settled(self) -> None:
+        """
+        The item has been heard end to end: the bytes are a copy of it now,
+        so they are named like one.
+        """
+
+        self._audio.replace(
+            self._audio.with_name(
+                self._audio.name.removesuffix(".part")
+            )
+        )

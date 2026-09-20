@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from subcast import cli, config, player
+from subcast.media import Ranged
 from subcast.sources import Captions, Media, rte
 
 PUBLISHED = (
@@ -624,6 +625,175 @@ def test_a_listing_is_played_item_after_item(monkeypatch, tmp_path: Path):
     ]
 
 
+def test_the_fetch_says_what_it_is_fetching(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    """
+    The download is the wait a captioned item has, so the run says what it
+    is fetching - how long the audio is - before it settles in to wait.
+    """
+
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(
+        cli,
+        "acquire",
+        lambda media_item, stem: tmp_path / "audio.mp3",
+    )
+
+    cli.captions_audio(media(), args(subs=True), None)
+
+    assert (
+        "Fetching the audio to transcribe: 5:00."
+        in capsys.readouterr().out
+    )
+
+
+def test_a_stable_stream_is_heard_while_it_plays(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    """
+    Two probes agreeing - the same length, the same opening bytes - are what
+    lets the model hear the bytes the player is reading, so the first frame
+    does not wait for the whole item to be downloaded.
+    """
+
+    in_config_dir(monkeypatch, tmp_path)
+
+    ranged = Ranged(
+        length=1000,
+        opening=b"x" * 16,
+        extension=".mp3",
+    )
+
+    monkeypatch.setattr(cli, "range_probe", lambda url, headers: ranged)
+    monkeypatch.setattr(
+        cli,
+        "hears_the_audio",
+        lambda media_item, args: True,
+    )
+
+    hearing = cli.streamed_captions(media(), args(subs=True), None)
+
+    assert isinstance(hearing, cli.StreamedWhilePlaying)
+    assert "heard from the stream" in capsys.readouterr().out
+
+
+def test_a_url_that_answers_differently_is_downloaded_instead(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    An ad stitched into one request makes the two copies of an item
+    different, and captions timed against one of them cannot be in pace with
+    the other: such an item is downloaded whole first, which is what every
+    captioned run did before there was a stream to hear.
+    """
+
+    in_config_dir(monkeypatch, tmp_path)
+
+    answers = iter(
+        [
+            Ranged(length=1000, opening=b"x" * 16, extension=".mp3"),
+            Ranged(length=2000, opening=b"y" * 16, extension=".mp3"),
+        ]
+    )
+
+    monkeypatch.setattr(
+        cli,
+        "range_probe",
+        lambda url, headers: next(answers),
+    )
+    monkeypatch.setattr(
+        cli,
+        "hears_the_audio",
+        lambda media_item, args: True,
+    )
+
+    assert cli.streamed_captions(media(), args(subs=True), None) is None
+
+
+def test_a_server_that_will_not_serve_ranges_is_downloaded(
+    monkeypatch,
+    tmp_path: Path,
+):
+    in_config_dir(monkeypatch, tmp_path)
+
+    monkeypatch.setattr(cli, "range_probe", lambda url, headers: None)
+    monkeypatch.setattr(
+        cli,
+        "hears_the_audio",
+        lambda media_item, args: True,
+    )
+
+    assert cli.streamed_captions(media(), args(subs=True), None) is None
+
+
+def test_an_item_already_on_disk_is_not_fetched_again(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    A run that has just written the audio - `--save` - hears that file: the
+    bytes it plays are the bytes it has.
+    """
+
+    in_config_dir(monkeypatch, tmp_path)
+
+    monkeypatch.setattr(
+        cli,
+        "range_probe",
+        lambda url, headers: pytest.fail("probed an item already on disk"),
+    )
+
+    assert (
+        cli.streamed_captions(
+            media(),
+            args(subs=True),
+            tmp_path / "saved.mp3",
+        )
+        is None
+    )
+
+
+def test_captions_heard_from_the_stream_play_the_stream(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    The copy that is heard is the copy that plays: an item whose captions
+    are coming off the stream plays the stream rather than a file, which is
+    what lets the first frame be seconds away.
+    """
+
+    in_config_dir(monkeypatch, tmp_path)
+
+    item = replace(
+        media(),
+        kind="audio",
+        stream=False,
+        url="https://example.test/one.mp3",
+    )
+
+    hearing = cli.StreamedWhilePlaying(
+        item,
+        item.url,
+        Ranged(length=1000, opening=b"x" * 16, extension=".mp3"),
+        {},
+        tmp_path / "rte" / "one",
+        "small.en",
+        "auto",
+    )
+
+    assert cli.playback_url(
+        item,
+        cli.PendingSubtitles.finished(hearing),
+    ) == "https://example.test/one.mp3"
+
+
 def test_an_item_must_be_resolved_and_heard_from_the_same_audio(
     monkeypatch,
     tmp_path: Path,
@@ -710,6 +880,11 @@ def test_an_item_must_be_resolved_and_heard_from_the_same_audio(
         assert subtitles.wait() is PREPARED
         return 0
 
+    monkeypatch.setattr(
+        cli,
+        "streamed_captions",
+        lambda media, args, saved: None,
+    )
     monkeypatch.setattr(cli, "resolve_item", resolve)
     monkeypatch.setattr(cli, "captions_audio", fetch_audio)
     monkeypatch.setattr(cli, "prepare_item", prepare)

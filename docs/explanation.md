@@ -79,12 +79,18 @@ Sources differ in one way, and most other differences follow from it.
   syndication every podcast client is served.
 
 Captions are made while the item plays, and what is written as they are heard
-is the subtitle file mpv reads again each time it grows. A file is the easy
-case: the model hears it far faster than it plays, so each cue is written as
-soon as the words after it have been heard and stays ahead of the picture
-(`subtitles.HeardWhilePlaying`). The audio is fetched first, because that is the
-copy the captions belong to - it is the only thing in front of the first frame
-besides the listing and the resolve.
+is the subtitle file mpv reads again each time it grows. The model hears far
+faster than audio plays, so each cue is written as soon as the words after it
+have been heard and stays ahead of the picture.
+
+What the captions belong to is the copy of the item that plays, and that is what
+the run arranges: an item whose URL serves the same bytes to every request is
+heard from the stream itself, a span at a time, while the player reads it
+(`subtitles.StreamedWhilePlaying`), so nothing is downloaded before the first
+frame. A site that answers a different length to a second request - an ad
+stitched into one of them - is downloaded whole first, and heard from the file
+(`subtitles.HeardWhilePlaying`): captions timed against one copy of an item
+cannot be in pace with another.
 
 A broadcast is the same idea with the audio arriving in real time
 (`live.LiveCaptions`), and both present it the same way: the player hands the
@@ -147,8 +153,9 @@ Two kinds of subtitles come out of a run, and subcast prefers the cheaper one.
 - **Captions a site publishes.** YouTube times its own, so they cost one
   download and no GPU. Automatic (ASR) tracks count and need no option.
 - **Local transcription.** Sources without captions, such as RTÉ, need `--subs`.
-  Subcast downloads the audio once and transcribes it with faster-whisper in
-  English, with voice-activity filtering.
+  Subcast hears the audio with faster-whisper in English, with voice-activity
+  filtering, either from the stream while it plays or from a copy downloaded
+  first when the stream cannot be trusted to be one copy.
 
 The caption YouTube offers may be a translation of the video's own language, and
 translated tracks are the ones YouTube rate-limits. Subcast keeps the native

@@ -62,7 +62,7 @@ shell.
 | `--no-play` | Prepare everything and start no player. |
 | `--audio-only` | Play the audio with terminal captions instead of video in a window. |
 | `--quality HEIGHT` | Maximum video height for streaming and `--save`. Default `1080`. |
-| `--subs`, `--subtitles` | Transcribe the item locally where the source publishes no captions. The audio is fetched first, because it is what the captions are timed against, and the captions are written as they are heard: they appear while the item plays and keep ahead of it. On a live broadcast this is the only way it gets captions at all. |
+| `--subs`, `--subtitles` | Transcribe the item locally where the source publishes no captions. The captions are heard from the audio the item plays - the stream itself, by range, when the site serves the same bytes to every request, and a copy downloaded first otherwise - and are written as they are heard: they appear while the item plays and keep ahead of it. On a live broadcast this is the only way it gets captions at all. |
 | `--subs-from {auto,published,asr}` | Where subtitles come from. Default `auto`. On a broadcast, `published` leaves it with none, because its captions have to be made. |
 | `--whisper-model MODEL` | The faster-whisper model used for transcription. Default `small.en`. |
 | `--whisper-device {auto,cuda,cpu}` | Device for transcription. Default `auto`. |
@@ -162,6 +162,8 @@ alone, so a stock mpv works.
 | `Streams: mpv extracts them from the page` | The player was given the page URL and resolves it itself. |
 | `Streams: the stream URL subcast resolved` | The player was given the stream URL a resolve just found, for a source whose URL is a page it could not play. |
 | `Streams: the audio the captions were timed against` | The player was given the audio this run transcribed, because a source that stitches ads in per request does not serve the same audio twice. |
+| `Captions are heard from the stream while it plays.` | The captions are being heard from the same URL the player is reading, a span at a time. |
+| `Fetching the audio to transcribe: <length>.` | The item is being downloaded before playback: its site will not serve it in spans, or no player is waiting for it. |
 | `Using the cached transcript; not asking YouTube again.` | The cache satisfied the run. |
 | `Fetching captions: <language>` | A published caption track is being downloaded. |
 | `Published captions (<language>): <n> cues` | Published captions were used. |
