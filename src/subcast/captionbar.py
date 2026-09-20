@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 import select
 import shutil
-import signal
 import subprocess
 import sys
 import termios
@@ -81,18 +80,6 @@ RESTORE_CURSOR = "\x1b8"
 RESET = "\x1b[0m"
 
 POLL_SECONDS = 0.15
-
-_STOPPING = False
-
-
-def _request_stop(signum, frame) -> None:
-    """
-    Ask the loop to finish, so the block is cleared on the way out.
-    """
-
-    global _STOPPING
-
-    _STOPPING = True
 
 
 def auto_scale(
@@ -733,13 +720,6 @@ def _play_once(
         str(url)
     )
 
-    for name in ("SIGTERM", "SIGHUP"):
-
-        number = getattr(signal, name, None)
-
-        if number is not None:
-            signal.signal(number, _request_stop)
-
     process = subprocess.Popen(
         command
     )
@@ -826,10 +806,7 @@ def _follow(
 
     try:
 
-        while (
-            process.poll() is None
-            and not _STOPPING
-        ):
+        while process.poll() is None:
 
             position = client.get(
                 "time-pos"

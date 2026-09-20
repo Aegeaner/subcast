@@ -223,6 +223,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The caption block swallowed stop signals.** Playing with the block
+  installed the caption bar's own SIGTERM/SIGHUP handlers over the process's,
+  for the length of that play and never restored, and the flag they set was
+  never cleared. `cli.stop_signals` is what turns those two signals into
+  `cli.Stopped` so a run's teardown happens - it stops a broadcast's capture
+  and removes its chunks - and one bar-mode play replaced it for good: in the
+  shell, which is one process running many commands, a signal that arrived
+  during a later run no longer ended it, and a signal that arrived during a
+  run with the block left the flag set, so the next command's block loop
+  exited at once and the mpv it had just started was killed before a caption
+  was drawn. The block leaves the signals alone now: the `finally` that clears
+  the block and stops mpv runs on the way out either way.
+
 - **A streamed item's captions were drawn from the wrong part of the
   sentence.** The block was handed the model's segments as they came - a
   sentence at a time - where the subtitle file, mpv, a broadcast's captions and
