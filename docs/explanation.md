@@ -242,45 +242,63 @@ follow.
   channels have no track.
 
 `Media.live` is what a source marks such an item with, and captioning it is a
-job rather than a file. `Capture` reads the broadcast through yt-dlp again, at
-the cheapest format carrying sound, and cuts it into five-second chunks. What is
+job rather than a file. `Capture` reads the playlist the player is reading - the
+same rendition, because captions timed against one copy of a broadcast cannot be
+in pace with another - and takes the pieces it names one at a time. What is
 heard is appended to `<id>.live.srt`, a file of its own so that partial captions
 are never mistaken for the transcript of the video the broadcast becomes.
+
+A piece at a time rather than a pipe is what lets the capture outlive the
+broadcast. A pipe has to keep reading for hours, and the first read error ends
+the captions for the rest of the run; a piece is a bounded request that can be
+retried, skipped, or taken again from a playlist that has been resolved a second
+time, because the URL a broadcast is published under expires long before the
+broadcast does. It is also the only way to know where a piece belongs: the
+playlist says how long each one is and when the first of them aired.
 
 Four things are kept apart, because doing them together is what made captions
 come and go.
 
-- **A chunk is its number, not its place in a listing.** Files are deleted as
+- **A piece is its number, not its place in a listing.** Files are deleted as
   they are heard, so a listing shifts under its own cursor. Walking by position
-  dropped every second chunk of one broadcast.
-- **Placement is settled when a chunk closes**, from mpv's reading edge, and
-  carried until the chunk is heard. A transcriber a minute behind then costs a
-  minute of delay instead of captions at a moment the broadcast has gone past.
-  A queue longer than three chunks drops the oldest and says so once.
-- **What is left unheard of a chunk is heard again in front of the next one**,
-  cut where the captions stopped rather than at a fixed overlap, so a sentence
-  across the join is not handed to the model in halves. A cue placed before that
-  cut is dropped, as is anything from the last second and a half of a chunk.
-- **Nothing waits on a chunk boundary.** A pass is heard as soon as a chunk
+  dropped every second piece of one broadcast.
+- **Placement is settled when a piece closes**, from what the piece says about
+  itself, and carried until it is heard. A transcriber a minute behind then
+  costs a minute of delay instead of captions at a moment the broadcast has gone
+  past. A queue longer than three pieces drops the oldest and says so once.
+- **A piece is heard with the tail of the one before it**, so the model is not
+  left to make out a sentence from its middle. The line it makes of those words
+  and the piece together is cut where the captions stopped, word by word,
+  because dropping the line would lose the words it ends with. The last of a
+  piece waits for the pass that hears its ending.
+- **Nothing waits on a piece boundary.** A pass is heard as soon as a piece
   closes, and what it adds is written at once. A caption's delay is that one
-  chunk, which must fit inside mpv's buffer.
+  piece, which must fit inside mpv's buffer.
 
-**Where a cue belongs is mpv's to say.** Its `demuxer-cache-time` is the audio
-being captured at that moment, so a chunk that closed now began one chunk-length
-behind that reading. Timing a live cue from the playback position instead would
-put every one a buffer's worth early, because mpv plays a broadcast behind the
-publisher's live edge. While mpv fills its buffer at the start of a run it reads
-faster than the broadcast is published, so subcast ignores readings that outrun
-the clock.
+**Where a cue belongs is what the piece says.** A piece of a broadcast carries
+the broadcast's own timeline in its timestamps, and that is the timeline the
+player reads a subtitle file against, so a caption is written at the moment the
+audio it came from begins. Nothing is inferred from where the player has read up
+to: mpv looks at the playlist once a piece, so its reading edge sits a whole
+piece behind the broadcast, and captions anchored on it were on screen several
+seconds before the words, on every piece of one measured run. A cue timed from
+the playback position would be worse still - a buffer's worth early, because the
+player is behind the publisher's live edge.
 
-The hearing is greedy, with one beam, and runs without the voice filter an
-episode gets, which drops whole sentences and cuts the fronts off words. Without
-it the model invents over music, as the same sentence cue after cue, so a loop
-guard keeps only the first of a run. Deliberately not `temperature=0`, which
-reads like the safer choice and repeats itself more.
+The hearing is greedy, with one beam, and nothing is heard through a voice
+filter. Asking the model to drop what is not speech and put the timestamps back
+afterwards reads like a way to hear a broadcast more cheaply, and measured it
+drops speech: on three minutes of a music-heavy channel, over half the words a
+filterless pass heard had no cue over them, and on ten minutes of an episode it
+kept no more words than the filter and cost no less time. What a model writes
+over music is kept out by what it says instead: a note about the soundtrack is
+not a caption, and a line it repeats is a line it invented, so a loop guard
+keeps only the first of a run and refuses a line the pass before it has just
+said. Deliberately not `temperature=0`, which reads like the safer choice and
+repeats itself more.
 
 The cost is one more extraction of the stream beside mpv's own, which `--subs`
-already costs on a video, and one chunk on disk at a time. A run turns mpv's
+already costs on a video, and one piece on disk at a time. A run turns mpv's
 logging down to warnings for the player module only, because every subtitle
 reload makes mpv log its whole track list; turning every module down would take
 the terminal's subtitles with it.

@@ -276,8 +276,8 @@ subcast <url> --subs --whisper-device cpu
 ## Caption a live broadcast
 
 A broadcast has no finished audio to transcribe and usually publishes no
-captions, so `--subs` makes them while it airs: subcast takes the audio from the
-stream, cuts it into chunks, and transcribes each chunk as it closes.
+captions, so `--subs` makes them while it airs: subcast takes the pieces the
+broadcast's playlist names, and transcribes each one as it closes.
 
 ```bash
 subcast <url> --subs

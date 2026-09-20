@@ -34,6 +34,69 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A broadcast's captions are made from the pieces its playlist names, not
+  from a pipe read for hours.** The capture used to run
+  `yt-dlp -f worstaudio/worst -o - | ffmpeg -f segment` for the whole
+  broadcast: one process that has to survive it, no way to know how long a
+  chunk was, and a chunk thrown away whenever mpv had not yet said where it
+  was reading. It now resolves the playlist of the same rendition the player
+  is given, fetches each new piece of it by its `EXT-X-MEDIA-SEQUENCE`,
+  decodes it on its own, and renames it into place when it is whole; a piece
+  that will not come down is retried and skipped, and a playlist past the
+  expiry its URL carries is resolved again. Measured against a reference
+  transcript of the same three minutes of one broadcast (a cartoon channel,
+  overlapping 20-second windows, beam 5, no voice filter, times verified
+  against the same audio cut into slices), 2026-09-20:
+
+  | | before | after |
+  | --- | --- | --- |
+  | reference words with no cue over them | 116 of 360 (32%) | 59 of 360 (16%) |
+  | cues the reference supports | 55 of 72 (76%) | 70 of 80 (88%) |
+  | seconds of cues written | 142s | 111s (the reference's speech: 117s) |
+  | listening time for 180s of broadcast | 8.7s | 12.7s |
+
+- **A piece is placed by the clock its own audio carries, never by where mpv
+  has read up to.** The capture reads the first timestamp of each piece as it
+  comes down (`live.timestamp_of`) and hands it over already placed; a piece
+  whose clock cannot be read is placed where the piece before it ends, and a run
+  whose first piece cannot be read is refused rather than captioned at a guess.
+  Measured against one broadcast, 2026-09-20: mpv's `demuxer-cache-time` sits
+  0.05s to 10.0s behind the broadcast's own edge (median 5.1s - a whole piece),
+  because it looks at the playlist once a piece, so cues placed from it were on
+  screen before the words - over 27 pieces, a median 7.9s before the audio they
+  were heard from. Placed by the piece's own clock instead, the position matches
+  the audio exactly: bias 0.00s, min and max, over 30 pieces. Nothing asks the
+  player where it is any more: `GrowingCaptions.sample`, the reading-edge guards
+  (`live.edge_at` and its fill window) and the queue that waited for a first
+  reading all went with the anchor.
+
+- **A transcript is what the model wrote, heard without a voice filter, less
+  the notes it makes about the soundtrack.** Two ways of keeping invention out
+  were tried and measured away. `vad_filter=True` asked faster-whisper to drop
+  what is not speech and put the timestamps back afterwards - measured,
+  2026-09-20, on three minutes of a music-heavy broadcast, 54% of the words a
+  filterless pass heard had no cue over them against 8% without it, and what it
+  did write was merged (one cue was fourteen seconds of dialogue placed where
+  the audio was not); on ten minutes of an episode from a podcast it kept no
+  more words than the filter and cost no less time (1774 against 1776 words;
+  38.5s against 36.9s for 600s of audio). A gate on the model's own doubts
+  (`no_speech_prob`, `avg_logprob`, `compression_ratio`) went the same way:
+  `no_speech_prob` is a whole window's verdict, so eight consecutive segments of
+  that episode carried the same 0.69 while their words were a confident -0.12,
+  and the gate took 121 words of speech out of those ten minutes while dropping
+  nothing at all from the music-heavy three. What keeps invention out is what
+  the model *wrote*: a note about the soundtrack is not a caption
+  (`annotation`), a line it repeats is a line it invented (the loop guards), and
+  a line that reaches back into what has already been said is cut at the join,
+  word by word, rather than kept whole.
+
+  A live pass also hears the tail of the piece before it as context, so the
+  model is not left to make out a sentence from its middle. Measured over the
+  three minutes: cues the reference transcript supports 55 of 72 (76%) before
+  and 73 of 85 (86%) after, reference words with no cue over them 116 of 360
+  (32%) before and 54 of 360 (15%) after, and the episode path measured 91% of
+  its cues supported with 8% of the reference's words uncaptioned.
+
 - **The version of a BBC programme that plays is the one BBC publishes for
   download.** A programme that has aired lists the version it aired as first, and
   the syndication URL every podcast client is served answers 404 for that one.

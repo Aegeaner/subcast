@@ -829,21 +829,6 @@ def _follow(
 
             if live is not None:
 
-                # The live edge is what places a caption: what mpv has read
-                # up to is the audio being captured at that moment.
-                edge = client.get(
-                    "demuxer-cache-time"
-                )
-
-                live.sample(
-                    time.monotonic(),
-                    float(
-                        edge
-                        if edge is not None
-                        else seconds
-                    ),
-                )
-
                 cues = live.cues()
 
                 notes = live.take_notes()

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -11,6 +10,9 @@ import pytest
 from subcast import live, player
 from subcast.meta import Streams
 from subcast.subtitles import PendingSubtitles, Prepared
+
+# How long a piece of a broadcast is, in the tests that hand one over.
+PIECE_SECONDS = 5.0
 
 
 class FakeClient:
@@ -457,14 +459,14 @@ def place(
     at: float,
 ) -> live.LiveCaptions:
     """
-    A chunk closed at a known moment of the broadcast, heard the way the
+    A piece of the broadcast closed at a known moment, heard the way the
     worker hears one.
     """
 
     path = tmp_path / f"chunk_{sequence:05d}.wav"
     path.write_bytes(b"")
 
-    job.transcribe(live.Chunk(sequence, path, at))
+    job.transcribe(live.Piece(sequence, path, at, PIECE_SECONDS))
 
     return job
 
@@ -475,8 +477,8 @@ def broadcast(
     cues: list[tuple[float, float, str]] | None = None,
 ) -> live.LiveCaptions:
     """
-    A live job that has already heard one chunk, without a capture behind
-    it: the chunk is what the player and mpv are handed.
+    A live job that has already heard one piece of the broadcast, without a
+    capture behind it: the piece is what the player and mpv are handed.
     """
 
     monkeypatch.setattr(
@@ -497,10 +499,7 @@ def broadcast(
         tmp_path / "abc",
         model=None,
         capture=live.Capture("https://example.test/watch"),
-        clock=lambda: 115.0,
     )
-
-    job.sample(100.0, 5000.0)
 
     return place(job, tmp_path, 0, 5000.0)
 
@@ -595,14 +594,14 @@ def test_the_capture_starts_when_something_begins_watching(
     assert started == [1]
 
 
-def test_a_chunk_is_placed_by_where_mpv_has_read_up_to(
+def test_a_piece_is_placed_where_the_broadcast_says_it_is(
     tmp_path: Path,
     monkeypatch,
 ):
     """
-    `cache-time` is the position mpv has read up to, which is the audio
-    being captured right now - so the chunk that has just closed belongs a
-    chunk-length behind it, not where playback is.
+    A cue is written on the broadcast's own timeline, so mpv reads it against
+    the same clock it plays against - nothing about where mpv has read up to
+    enters into it.
     """
 
     monkeypatch.setattr(
@@ -623,25 +622,19 @@ def test_a_chunk_is_placed_by_where_mpv_has_read_up_to(
         capture=live.Capture("https://example.test/watch"),
     )
 
-    player.LiveView(
-        LiveClient(cache_time=5000.0),
-        captions,
-    ).pass_over()
-
     chunk = tmp_path / "chunk_00000.wav"
     chunk.write_bytes(b"")
 
-    captions._place([(0, chunk)])
-    captions.transcribe(captions._queued.popleft())
-
-    # A chunk-length behind the live edge, plus the second the chunk's own
-    # cue starts at.
-    assert captions.cues()[0][0] == pytest.approx(
-        5000.0 - live.CHUNK_SECONDS + 1.0,
-        abs=1.0,
+    captions.transcribe(
+        live.Piece(
+            sequence=0,
+            path=chunk,
+            at=5000.0,
+            duration=PIECE_SECONDS,
+        )
     )
 
-
+    assert captions.cues() == [(5001.0, 5002.0, "Good morning.")]
 def test_a_live_failure_is_said_once(
     tmp_path: Path,
     monkeypatch,
@@ -662,8 +655,6 @@ def test_a_live_failure_is_said_once(
         model=None,
         capture=live.Capture("https://example.test/watch"),
     )
-
-    captions.sample(time.monotonic(), 5000.0)
 
     place(captions, tmp_path, 0, 5000.0)
 

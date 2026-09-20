@@ -54,12 +54,13 @@ class GrowingCaptions:
 
     A source of them answers three questions - `start`, `cues` and
     `revision`, and `stop` when the play is over - and where it answers
-    from is its own business: a broadcast being chunked as it airs
+    from is its own business: a broadcast heard piece by piece as it airs
     (`live.LiveCaptions`), a file being heard (`HeardWhilePlaying`), or an
     item still arriving by range (`StreamedWhilePlaying`). Playback drives
     either the same way: the subtitle file is handed to mpv once and
     reloaded whenever `revision` changes, so a caption is on screen as soon
-    as it is written.
+    as it is written. Every one of them times its cues on the item's own
+    timeline, which is why none of them asks the player where it is.
     """
 
     srt_path: Path
@@ -90,19 +91,6 @@ class GrowingCaptions:
         """
 
         raise NotImplementedError
-
-    def sample(
-        self,
-        wall: float,
-        edge: float,
-    ) -> None:
-        """
-        Where mpv has read up to, and when it said so.
-
-        Carried because a broadcast is placed from that reading, and
-        ignored by a source whose cues are already on the item's own
-        timeline.
-        """
 
     def take_notes(self) -> list[str]:
         """
@@ -253,6 +241,7 @@ def transcribe(
 def transcribe_cues(
     model,
     audio_path: Path,
+    after: float = 0.0,
     **settings,
 ) -> list[tuple[float, float, str]]:
     """
@@ -263,6 +252,11 @@ def transcribe_cues(
     the timeline is the caller's to say. `settings` are for what only a
     chunk needs - it is heard while it is still being followed, where an
     episode is heard once and for good.
+
+    `after` is the second of the audio the captions have already been
+    written up to - a pass hears the words before it so the model is not
+    left to make out a sentence from its middle - and what comes back from
+    there on is what the model wrote (`_heard`).
     """
 
     stream, _info = _stream(
@@ -271,15 +265,89 @@ def transcribe_cues(
         **settings,
     )
 
-    return [
-        (
+    cues: list[tuple[float, float, str]] = []
+
+    for segment in stream:
+
+        text, start, end = _heard(segment, after)
+
+        if text:
+
+            cues.append((start, end, text))
+
+    return cues
+
+
+def _heard(
+    segment,
+    after: float,
+) -> tuple[str, float, float]:
+    """
+    What one segment said from a given second of its audio on.
+
+    A segment that straddles the join holds the words in front of the piece
+    and the words of the piece together, and only the second half of it is
+    new: its words carry their own timing (`word_timestamps`), so the line is
+    cut where the captions stopped. Dropping the segment instead would lose
+    the words it ends with, which is captions coming and going.
+
+    Without word timings there is nothing to cut with, and the segment is
+    taken whole - the caller drops what falls in what has been said.
+    """
+
+    if not segment.words:
+
+        return (
+            segment.text.strip(),
             float(segment.start),
             float(segment.end),
-            segment.text.strip(),
         )
-        for segment in stream
-        if segment.text.strip()
+
+    words = [
+        word
+        for word in segment.words
+        if float(word.start) >= after
     ]
+
+    # What the model wrote carries its own spacing - " Bandit" - so the
+    # words join without any being added.
+    text = "".join(
+        word.word for word in words
+    ).strip()
+
+    if not text:
+
+        return "", 0.0, 0.0
+
+    return (
+        text,
+        float(words[0].start),
+        float(words[-1].end),
+    )
+
+
+def annotation(
+    text: str,
+) -> bool:
+    """
+    Whether a line is a note about the soundtrack rather than speech:
+    "[Music]", "(laughs)", nothing but music symbols.
+
+    Whisper writes these where it heard no speech, and what it writes beside
+    them it was not sure of either.
+    """
+
+    line = text.strip().strip("♪").strip()
+
+    if not line:
+
+        return True
+
+    return (
+        line.startswith("[") and line.endswith("]")
+    ) or (
+        line.startswith("(") and line.endswith(")")
+    )
 
 
 def _stream(
@@ -288,26 +356,44 @@ def _stream(
     **settings,
 ):
     """
-    The model reading a file: English speech, silence dropped.
+    The model reading a file: English speech, and the notes it writes about
+    the soundtrack dropped.
 
-    One definition, because these settings are what the transcript is -
-    an episode and a live chunk have to be heard the same way - and
-    `settings` are only for the two that are not: how the decoder is run,
-    and how much of the sound the voice filter is allowed to keep. They
+    One definition, because these settings are what the transcript is - an
+    episode and a live chunk have to be heard the same way - and `settings`
+    are for what only one of them needs: how the decoder is run. They
     replace a default rather than sit beside it.
+
+    The voice filter is not used. It asks faster-whisper to drop what is not
+    speech and put the timestamps back afterwards, and measured, it drops
+    speech instead: on three minutes of a music-heavy broadcast it left 54%
+    of the words a filterless pass heard with no cue over them, and on a
+    ten-minute episode it kept the same words and cost the same time (1774
+    against 1776 words; 38.5s against 36.9s for 600s of audio). What the
+    model writes over music is kept out by `annotation` and, for a
+    broadcast, by the loop guards, rather than by cutting the audio up.
     """
 
     options = {
         "language": "en",
-        "vad_filter": True,
+        "vad_filter": False,
         "condition_on_previous_text": False,
     }
 
     options.update(settings)
 
-    return model.transcribe(
+    reading, info = model.transcribe(
         str(audio_path),
         **options,
+    )
+
+    return (
+        (
+            segment
+            for segment in reading
+            if not annotation(segment.text)
+        ),
+        info,
     )
 
 

@@ -63,7 +63,7 @@ shell.
 | `--no-play` | Prepare everything and start no player. |
 | `--audio-only` | Play the audio with terminal captions instead of video in a window. |
 | `--quality HEIGHT` | Maximum video height for streaming and `--save`. Default `1080`. |
-| `--subs`, `--subtitles` | Transcribe the item locally where the source publishes no captions. The captions are heard from the audio the item plays - the stream itself, by range, when the site serves the same bytes to every request, and a copy downloaded first otherwise - and are written as they are heard: they appear while the item plays and keep ahead of it. On a live broadcast this is the only way it gets captions at all. |
+| `--subs`, `--subtitles` | Transcribe the item locally where the source publishes no captions. The captions are heard from the audio the item plays - the stream itself, by range, when the site serves the same bytes to every request, and a copy downloaded first otherwise - and are written as they are heard: they appear while the item plays and keep ahead of it. A broadcast is heard from the pieces the playlist the player reads names, one at a time. On a live broadcast this is the only way it gets captions at all. |
 | `--subs-from {auto,published,asr}` | Where subtitles come from. Default `auto`. On a broadcast, `published` leaves it with none, because its captions have to be made. |
 | `--whisper-model MODEL` | The faster-whisper model used for transcription. Default `small.en`. |
 | `--whisper-device {auto,cuda,cpu}` | Device for transcription. Default `auto`. |
@@ -171,6 +171,10 @@ alone, so a stock mpv works.
 | `Published captions (<language>): <n> cues` | Published captions were used. |
 | `Live broadcast: captions made as it plays` | The item is a broadcast, and this run transcribes it as it airs. |
 | `Live captions failed: <reason>; playing without them.` | The broadcast's capture or transcription gave up. Playback carries on. |
+| `Live captions failed: the broadcast's audio would not say when it aired; playing without them.` | The first piece's timestamps could not be read, so there is no place on the broadcast's timeline to put a cue. |
+| `Live captions: the broadcast's playlist was renewed.` | The URL the playlist was published under expired while the broadcast was still airing, and a fresh one was resolved. Said once. |
+| `Live captions: a piece of the broadcast could not be fetched.` | One piece was lost, and the broadcast carries on without it. Said once. |
+| `Live captions: a piece of the broadcast could not be decoded (<reason>).` | One piece was fetched but would not decode, and the broadcast carries on without it. Said once. |
 | `Live captions cannot keep up with this broadcast; skipping ahead to the live edge.` | Transcription is slower than the broadcast, so the oldest waiting chunks are dropped. Said once. |
 | `Live captions: <n> chunk(s) heard, <m> with no speech, <k> skipped.` | The end of a broadcast run: what its captions came to. |
 | `Heard <n> min / <m> min (<p>%)` | How much of a file being transcribed has been heard. |

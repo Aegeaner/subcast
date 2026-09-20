@@ -321,6 +321,190 @@ def test_settings_replace_the_defaults_rather_than_sitting_beside_them():
     assert model.seen["condition_on_previous_text"] is False
 
 
+class Word:
+    """One word, as the model timed it and wrote it."""
+
+    def __init__(self, start: float, end: float, word: str) -> None:
+
+        self.start = start
+        self.end = end
+        self.word = word
+
+
+class Said:
+    """
+    One segment, with the timing of its words, as faster-whisper hands it
+    over.
+    """
+
+    def __init__(
+        self,
+        text: str,
+        start: float = 0.0,
+        end: float = 1.0,
+        words: list[Word] | None = None,
+    ) -> None:
+
+        self.text = text
+        self.start = start
+        self.end = end
+        self.words = words
+
+
+class Whisper:
+    """A model that hands over what a test says it heard."""
+
+    def __init__(self, *segments: Said) -> None:
+
+        self.segments = list(segments)
+
+    def transcribe(self, path, **options):
+
+        return iter(self.segments), None
+
+
+def test_a_line_the_model_was_unsure_of_is_still_written():
+    """
+    What the model wrote is what is written. Dropping a line because the
+    model doubted it was tried and measured away: `no_speech_prob` is a whole
+    window's verdict, so eight consecutive segments of one episode carried the
+    same 0.69 while their words were a confident -0.12 - and cutting those on
+    it took 121 words of speech out of ten minutes of audio, while on three
+    minutes of a music-heavy broadcast it dropped nothing at all.
+    """
+
+    model = Whisper(
+        Said("Backing track that he then would perform."),
+        Said("Mum! Dad! Bingo!"),
+    )
+
+    assert subtitles.transcribe_cues(
+        model,
+        Path("/tmp/chunk.wav"),
+    ) == [
+        (0.0, 1.0, "Backing track that he then would perform."),
+        (0.0, 1.0, "Mum! Dad! Bingo!"),
+    ]
+
+
+def test_the_voice_filter_is_not_asked_for():
+    """
+    The filter asks faster-whisper to drop what is not speech and put the
+    timestamps back afterwards, and measured, it drops speech instead: on
+    three minutes of a music-heavy broadcast, 54% of the words a filterless
+    pass heard had no cue over them, and on ten minutes of an episode it kept
+    the same words and cost the same time.
+
+    What the model writes over music is kept out by `annotation` and the loop
+    guards rather than by cutting the audio up.
+    """
+
+    class FakeModel:
+        """Records what the reader was asked for."""
+
+        def __init__(self) -> None:
+
+            self.seen: dict = {}
+
+        def transcribe(self, path, **options):
+
+            self.seen = options
+
+            return iter([]), None
+
+    model = FakeModel()
+
+    subtitles.transcribe_cues(
+        model,
+        Path("/tmp/chunk.wav"),
+    )
+
+    assert model.seen["vad_filter"] is False
+
+
+def test_a_line_that_straddles_the_join_is_cut_where_the_captions_stopped():
+    """
+    A pass hears the words before its piece as context, and the model may
+    make one line of those together with the piece: the words carry their own
+    timing, so the line is cut at the join. Dropping the line instead would
+    lose the words it ends with, which is captions that come and go.
+    """
+
+    model = Whisper(
+        Said(
+            "Let's play a game. Bandit takes over!",
+            words=[
+                Word(0.2, 0.6, " Let's"),
+                Word(0.6, 0.9, " play"),
+                Word(0.9, 1.2, " a"),
+                Word(1.2, 1.6, " game."),
+                Word(1.7, 2.1, " Bandit"),
+                Word(2.1, 2.5, " takes"),
+                Word(2.5, 2.9, " over!"),
+            ],
+        ),
+    )
+
+    # The captions have been written up to 1.5 seconds of what is heard.
+    assert subtitles.transcribe_cues(
+        model,
+        Path("/tmp/chunk.wav"),
+        after=1.5,
+    ) == [
+        (1.7, 2.9, "Bandit takes over!"),
+    ]
+
+
+def test_a_line_wholly_in_what_was_already_said_is_not_a_caption():
+    """
+    The words in front of a piece are context: a line the model makes of them
+    alone has been said already, and there is nothing of it to say.
+    """
+
+    model = Whisper(
+        Said(
+            "Good morning.",
+            words=[
+                Word(0.1, 0.4, " Good"),
+                Word(0.4, 0.9, " morning."),
+            ],
+        ),
+    )
+
+    assert (
+        subtitles.transcribe_cues(
+            model,
+            Path("/tmp/chunk.wav"),
+            after=1.0,
+        )
+        == []
+    )
+
+
+def test_a_segment_without_word_timing_is_taken_whole():
+    """
+    A model that does not hand over the timing of its words leaves nothing to
+    cut a line with, so the segment is taken as it comes and the caller
+    decides what of it belongs.
+    """
+
+    model = Whisper(
+        Said(
+            "Good morning.",
+            start=0.5,
+            end=2.0,
+        ),
+    )
+
+    assert subtitles.transcribe_cues(
+        model,
+        Path("/tmp/chunk.wav"),
+        after=1.0,
+    ) == [
+        (0.5, 2.0, "Good morning."),
+    ]
+
+
 class Segment:
     """One stretch of speech, as the model hands it over."""
 
