@@ -74,8 +74,31 @@ subcast https://youtu.be/<id>
 An mpv window opens. Captions the video publishes arrive on their own, usually
 within seconds and without using the GPU.
 
-**Play an episode that has no captions.** With no URL, subcast plays the newest
-RTÉ Morning Ireland. Add `--subs` to transcribe it:
+**Open the shell.** Run subcast with no arguments at all and it waits for
+commands instead of playing anything:
+
+```
+subcast: the feeds you kept, played by name.
+
+  /list                 Print the feeds you saved, and where each is read from.
+  /feed [<name>]        Open a feed and choose what to play from it.
+  /add <alias> <url>    Keep a feed under an alias.
+  /remove <alias>       Forget a feed, by the name it was kept under.
+  /help [<command>]     Print this list, or one command in full.
+  /quit                 Stop the shell. Ctrl-D does the same.
+
+subcast> /feed
+```
+
+`/feed` with no name opens the feed called `morning`, which is the newest RTÉ
+Morning Ireland; `/feed bbcnews` opens a feed you saved, and `/feed 3` opens the
+third one. Each lists its entries and asks what to play, with captions on.
+`/help feed` prints one command in full, including the command line it is the
+same as.
+
+**Play an episode that has no captions.** A flag with no URL opens the feed
+called `morning`, which is the newest RTÉ Morning Ireland, and `--subs`
+transcribes it:
 
 ```bash
 subcast --subs

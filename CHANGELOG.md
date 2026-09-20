@@ -98,7 +98,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   format, so `bestaudio/best` was falling back to the whole 1080p stream
   (5421k against 144p's 290k, measured on the same broadcast).
 
+- **A shell for the runs with no arguments.** `subcast` on its own reads
+  commands: `/list` is `--feeds`, `/feed [<name or number>]` opens a saved feed
+  and asks what to play from it with captions on (with no name, the feed called
+  `morning`), `/add <alias> <url>` keeps a feed and `/remove <alias>` forgets
+  one, `/help [<command>]` prints the commands or one of them in full, and
+  `/quit` stops. The commands are listed as the prompt opens, one to a line with
+  what each does, in the layout `subcast --help` puts its options in. A command
+  is the arguments it means, parsed by the same parser the command line uses
+  (`shell.COMMANDS`, `cli.parse_args`), so nothing about the pipeline is a
+  second implementation, and the rules a name and a URL obey are the ones
+  `feeds.add` already has.
+
 ### Changed
+
+- **The default programme is an ordinary feed called `morning`, not a built-in
+  one.** The feed a run with no URL opens used to be a record in the code: it
+  was printed apart from the saved feeds, could not be removed, and would not
+  have been in the file at all. It is now a feed like the others - `morning`,
+  which is Morning Ireland - and a machine whose feeds file has never been
+  written is seeded with it once (`feeds.seed`), only when the file is not
+  there, so removing it means removing it. `/feed` with no name and a run with
+  no URL are the same lookup by the same name.
+
+- **A bare `subcast` no longer plays the newest Morning Ireland: it opens the
+  shell.** What a command does not do is end the shell - playback finishing, a
+  URL nothing reads, a feed that does not answer and a command line argparse
+  refuses all leave the prompt waiting for the next command. Ctrl-C stops the
+  command that is running, mpv terminated and the caption block cleared, so the
+  prompt that follows is the prompt that was there before; `/quit`, Ctrl-D,
+  `SIGTERM` and `SIGHUP` stop the shell, and a signal arrives as its own
+  exception (`cli.Stopped`) so that a shell told to go away goes away. Any
+  argument is still a run, so the documented `subcast --subs` is unchanged, and
+  a script that wants what a bare run used to do asks for it with `--no-pick`.
+  `cli.main` takes the command line as an argument now, so what a run was told
+  comes from whatever starts it rather than from the process's own argv.
 
 - **A captioned episode plays the audio it was transcribed from.** RTÉ stitches
   ads into an episode per request - the same URL answers with different audio a
@@ -149,9 +183,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   was never part of what was saved - the URL decides that - but the code let a
   source own a programme: `sources.default()` answered with the RTÉ source and
   Morning Ireland's URL attached to it, so "RTÉ" and "the programme that opens
-  by default" were one fact. The default is a feed now (`feeds.DEFAULT`, opened
-  through the same path a saved one takes), and the RTÉ source lists Morning
-  Ireland and This Week alike without owning either.
+  by default" were one fact. The default is a feed now, opened through the same
+  path a saved one takes, and the RTÉ source lists Morning Ireland and This
+  Week alike without owning either.
 
   A name is the whole of how a feed is asked for, so saving one over a name that
   already means another URL is refused rather than silently replacing it: the
@@ -159,8 +193,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and two names are how the two are told apart. `--feeds` prints the source each
   feed is read by, and says `?` for a URL nothing reads, which is what a feed
   saved ahead of its source looks like; `--add-feed` prints the source it
-  detected; and `--feed` reaches the built-in Morning Ireland by name as well as
-  by being the run with no URL.
+  detected; and `--feed` reaches the feed a run with no URL opens by name as
+  well as by being that run.
 
 ### Fixed
 

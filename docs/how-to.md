@@ -13,7 +13,73 @@ Pass subcast a URL. It plays the item in an mpv window:
 subcast https://youtu.be/<id>
 ```
 
-With no URL, subcast plays the newest RTÉ Morning Ireland.
+With no arguments at all, subcast opens the [shell](#use-the-shell) instead;
+`subcast --subs` plays the newest RTÉ Morning Ireland and transcribes it.
+
+## Use the shell
+
+Run subcast with no arguments at all and it waits for commands rather than
+playing anything. It prints them as it opens, `/help` prints them again, and
+`/help <command>` prints one in full:
+
+```
+subcast> /list
+    1. c4  youtube  https://www.youtube.com/@Channel4News
+    2. bbcnews  bbc  https://www.bbc.com/audio/brand/p002vsmz
+    3. morning  rte  https://www.rte.ie/radio/radio1/morning-ireland/
+subcast> /help feed
+  /feed [<name>]
+                        Open a feed and choose what to play from it.
+                        the same as: subcast --feed <name> --pick --subs
+
+subcast> /feed c4
+```
+
+`/list` prints the feeds you saved, as `subcast --feeds` does. `/feed` opens a
+feed and asks what to play from it, with captions on. `/quit` stops.
+
+Give `/feed` the name or the number of a saved feed, or nothing at all for
+`morning`, which is the newest RTÉ Morning Ireland:
+
+```
+subcast> /feed
+subcast> /feed 2
+subcast> /feed morning
+```
+
+Keep a feed, or forget one, without leaving the shell:
+
+```
+subcast> /add c4 https://www.youtube.com/@Channel4News
+    Feed: c4 (youtube)
+    https://www.youtube.com/@Channel4News
+subcast> /remove c4
+    Forgot: c4
+```
+
+`/add` takes the alias and the URL the feed is read from, with the same rules as
+`subcast <url> --add-feed --name <alias>`: a name that already means another URL
+is refused rather than quietly pointed elsewhere.
+
+Each command is the options it means, so `/feed c4` is
+`subcast --feed c4 --pick --subs`: the listing is printed, you choose from it,
+and what plays is transcribed. When a command finishes - playback included -
+the prompt comes back for the next one.
+
+Ctrl-C stops the command that is running and the prompt comes back, which is
+what you want after a stream you have heard enough of. `/quit`, or Ctrl-D, is
+how the shell is left; a signal that asks the run to end - `SIGTERM`, `SIGHUP` -
+ends it too.
+
+The shell reads its commands from standard input, so a pipe can drive it:
+
+```bash
+printf '/list\n/feed c4\n/quit\n' | subcast
+```
+
+A bare `subcast` used to play the newest Morning Ireland. A script that wants
+that asks for it: `subcast --no-pick` plays that feed's newest entry, and adding
+`--subs` transcribes it.
 
 ## Play another RTÉ Radio 1 programme
 
@@ -149,7 +215,7 @@ with a radio programme says which pipeline each one goes through:
 ```
     1. c4  youtube  https://www.youtube.com/@Channel4News
     2. This Week  rte  https://www.rte.ie/radio/radio1/this-week/
-  built in: Morning Ireland  rte  https://www.rte.ie/radio/radio1/morning-ireland/
+    3. morning  rte  https://www.rte.ie/radio/radio1/morning-ireland/
 ```
 
 The same show is often published twice, as a channel and as a programme, and two
@@ -162,11 +228,12 @@ Opening a feed shows its newest entries as a menu. To play the newest entry
 without being asked, add `--no-pick`. Every other option works on a feed too:
 `--subs`, `--save`, `--audio-only` and resume.
 
-One feed is built in rather than saved. `Morning Ireland` is what a run with no
-URL opens, and it opens by name like any other:
+A run with no URL opens the feed called `morning`, which a machine with no feeds
+file is written the first time one is needed - so a new install has something to
+play, and the feed is then yours to rename or remove like any other:
 
 ```bash
-subcast --feed "Morning Ireland"
+subcast --feed morning
 ```
 
 ## Transcribe an item that has no captions

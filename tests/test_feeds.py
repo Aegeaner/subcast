@@ -136,48 +136,41 @@ def test_a_name_is_tried_before_a_number(
     assert feeds.find("1").url == SKY
 
 
-def test_the_built_in_feed_is_found_by_its_name(
+def test_a_machine_with_no_feeds_file_starts_with_the_default_feed(
     monkeypatch,
     tmp_path: Path,
 ):
     """
-    The feed a run with no URL opens is a feed like any other: it answers
-    to its name, so it can also be opened on purpose.
+    A first run is written the feed a run with no URL opens, so that a
+    machine with a fresh config can still play something.
     """
 
     in_config_dir(monkeypatch, tmp_path)
 
-    assert feeds.find("morning ireland") == feeds.DEFAULT
+    feeds.seed()
+
+    assert feeds.find(feeds.DEFAULT_NAME) == feeds.Feed(
+        name=feeds.DEFAULT_NAME,
+        url=feeds.DEFAULT_URL,
+    )
 
 
-def test_the_built_in_feed_cannot_be_saved_over(
+def test_a_feed_that_was_removed_is_not_put_back(
     monkeypatch,
     tmp_path: Path,
 ):
+    """
+    Seeding writes a file that is not there and nothing else: the feed is
+    the user's once it exists, so removing it means removing it.
+    """
+
     in_config_dir(monkeypatch, tmp_path)
 
-    with pytest.raises(RuntimeError) as error:
-        feeds.add(feeds.DEFAULT.name, SKY)
+    feeds.seed()
+    feeds.remove(feeds.DEFAULT_NAME)
+    feeds.seed()
 
-    assert "built-in" in str(error.value)
     assert feeds.load() == []
-
-
-def test_the_built_in_feed_cannot_be_forgotten(
-    monkeypatch,
-    tmp_path: Path,
-):
-    """
-    It is not in the file, so forgetting it would do nothing at all -
-    which is worth saying rather than answering with silence.
-    """
-
-    in_config_dir(monkeypatch, tmp_path)
-
-    with pytest.raises(RuntimeError) as error:
-        feeds.remove(feeds.DEFAULT.name)
-
-    assert "built-in" in str(error.value)
 
 
 def test_a_feed_says_which_source_reads_its_url():

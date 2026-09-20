@@ -13,24 +13,51 @@ subcast [url] [options]
 
 `url` is a YouTube video, playlist or channel, a BBC Audio page, a Bloomberg
 podcast series, a podcast feed, or an RTÉ Radio 1 programme or episode. If you
-omit it, subcast opens its built-in feed: the latest episode of RTÉ Morning
-Ireland.
+omit it, subcast opens the feed called `morning`, which is the latest episode of
+RTÉ Morning Ireland. A machine whose feeds file has never been written is given
+that feed the first time a run needs one.
+
+Run subcast with no arguments at all and it opens its shell instead, reading
+commands from standard input until `/quit` or the end of it. The prompt prints
+the commands, one to a line, as it opens:
+
+| Command | Effect |
+| --- | --- |
+| `/list` | The saved feeds with the source each is read by: `--feeds`. |
+| `/feed [<name or number>]` | Open a feed and choose what to play: `--feed <name> --pick --subs`. With no name, `morning`, the feed a run with no URL opens. |
+| `/add <alias> <url>` | Keep a feed under an alias: `--add-feed --name <alias> <url>`. A name that already means another URL is refused. |
+| `/remove <alias>` | Forget a feed: `--remove-feed <alias>`. |
+| `/help [<command>]` | Print the commands, or one of them with the command line it is the same as. |
+| `/quit` | Stop the shell. Ctrl-D and a signal do the same. |
+
+A command is the arguments it means, so everything in this reference applies:
+`/feed c4` is `subcast --feed c4 --pick --subs`. The name a feed is asked for by
+is a name rather than a URL - `/feed` given a URL looks it up as a name and
+finds none - and `/add` is the one command a URL is given to, where it is kept
+rather than played. What a command does not do is
+end the shell: a URL that does not work, a feed that does not answer and an
+interrupted playback all report themselves and the prompt returns. A command
+that fails prints its `Error:` line and the shell reads the next command.
+Ctrl-C stops the command that is running; `/quit`, Ctrl-D, `SIGTERM` and
+`SIGHUP` stop the shell. Every argument on the command line is a run, so
+`subcast --subs` plays the feed a run with no URL opens rather than opening the
+shell.
 
 ## Options
 
 | Option | Effect |
 | --- | --- |
-| `<url>` | The item, listing or programme to work on. Omitted: subcast opens its built-in feed. |
+| `<url>` | The item, listing or programme to work on. Omitted: subcast opens the feed called `morning`. |
 | `--list` | Print the listing and stop. |
 | `--limit N` | How many entries to play, newest first. Default `1`; `0` plays all. A menu shows the newest `SUBSCAST_LIMIT` (30 by default) unless `N` says otherwise. |
 | `--pick` | Print the listing and read a choice from it. |
 | `--no-pick` | Play the newest entry without asking. |
 | `--search QUERY` | Search YouTube instead of taking a URL. |
-| `--feed NAME` | Open a saved feed, by name or by its number in `--feeds`. The built-in feed answers to its own name. |
-| `--feeds` | List the saved feeds with the source each is read by, and the built-in one, then stop. |
+| `--feed NAME` | Open a saved feed, by name or by its number in `--feeds`. With no URL, the feed called `morning` is the one opened. |
+| `--feeds` | List the saved feeds with the source each is read by, then stop. |
 | `--add-feed` | Save the URL as a feed: a YouTube playlist or channel, an RTÉ programme, a BBC Audio programme or category, a Bloomberg podcast series, or any podcast feed. Named by `--name`, or after the listing. A name that already means another URL is refused. |
 | `--name NAME` | The name `--add-feed` saves the feed under, which is the alias `--feed` asks for it by. |
-| `--remove-feed NAME` | Forget the feed called `NAME`. The built-in feed is not one of them. |
+| `--remove-feed NAME` | Forget the feed called `NAME`. |
 | `--save` | Download into `~/Videos/<source>/` instead of streaming, then stop. |
 | `--no-play` | Prepare everything and start no player. |
 | `--audio-only` | Play the audio with terminal captions instead of video in a window. |
@@ -97,7 +124,7 @@ Keys go to mpv, so any binding in your `mpv.conf` works.
 | `q` | Quit. |
 | `m` | Mute or unmute. The terminal block marks a muted stream with `[muted]`. |
 | `PageUp`, `PageDown` | Jump to the previous or next published segment. |
-| `Ctrl-C` | Stop subcast and clear the terminal block. |
+| `Ctrl-C` | Stop what is running and clear the terminal block. In the shell this stops the command and the prompt returns; `/quit` leaves the shell. |
 
 ## Terminal support
 
@@ -129,6 +156,7 @@ alone, so a stock mpv works.
 | `0` | The run finished. |
 | `2` | The stream could not be played. Subcast retries once, handing mpv the page URL. |
 | `4` | The player quit on a signal, such as `Ctrl-C`. |
+| `130` | The run was interrupted: `Ctrl-C` outside the shell, or a signal asking it to end. In the shell, `Ctrl-C` stops the command and this status is not reached. |
 | Any other status | Reported as `mpv exited with <status>`. |
 | `Streams: resolved by subcast` | The player was given stream URLs from the cache. |
 | `Streams: mpv extracts them from the page` | The player was given the page URL and resolves it itself. |
@@ -150,4 +178,3 @@ alone, so a stock mpv works.
 | `YouTube is rate-limiting this video's captions (HTTP 429); trying again in a few minutes usually works` | Every caption track was refused. |
 | `This terminal cannot render text at <n>x; captions stay at normal size.` | Scaled captions were requested on a terminal that cannot render them. |
 | `the feed '<name>' already points at <url>` | `--add-feed` was given a name another URL is saved under. Save under another `--name`, or remove that feed first. |
-| `'<name>' is the built-in feed` | The built-in feed, Morning Ireland, is not one of the saved ones, so there is nothing to save over it or to forget. |

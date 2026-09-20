@@ -51,10 +51,10 @@ and whether it is a broadcast.
 A **feed**, as `--feed` and `--feeds` mean it, is a listing the user saved: a URL
 with the name it is asked for by. That name is the whole of how a feed is
 addressed, so a name that already means another URL is refused rather than
-replaced, and the list of feeds says which source reads each one. One feed is
-built in rather than saved: Morning Ireland is what a run with no URL opens, and
-it is a feed like any other rather than a property of the RTÉ source - that
-source lists Morning Ireland and This Week alike, and owns neither.
+replaced, and the list of feeds says which source reads each one. One name is
+looked for by a run with no URL - `morning`, which is Morning Ireland - and it is
+a feed in the file like any other: a machine with no feeds file is written it
+once (`feeds.seed`), and it can be renamed or removed like the rest.
 
 ## Who resolves the stream
 
@@ -323,6 +323,34 @@ Local files and arbitrary URLs as sources; an `--rss` surface for podcast feeds,
 which play by URL today; per-source options such as cookies for age-restricted
 videos; and following a broadcast's own live caption playlist, which needs no
 GPU but the same growing-subtitle plumbing a broadcast's captions already have.
+
+## The shell
+
+A run with no arguments opens a shell, and a shell is only worth having if a
+command cannot mean anything the command line does not: `/feed bbcnews` is
+translated into `--feed bbcnews --pick --subs` and parsed by the same parser,
+so the listings, the picker, the captions and the player are the ones that were
+already there, and a command cannot drift away from them
+(`shell.feed_arguments`).
+
+What the shell adds is a lifetime. A command line is one run and one ending, so
+a failure there is the process's; a shell is a session, so the same failure is
+one command that did not work - a URL nothing reads, a feed that does not
+answer, a parse the options refuse - and the prompt comes back for the next one.
+Nothing a command does ends the shell.
+
+Ctrl-C is where that shows. In a session, Ctrl-C means "stop what you are
+doing", so playback stops - the player terminates mpv and clears the caption
+block on the way out, which is why the prompt that follows it is the prompt
+that was there before - and the shell reads the next command. A `SIGTERM` is
+the process being told to go away, so it arrives as its own exception
+(`cli.Stopped`) and is not caught: a shell that is told to leave leaves. The
+one thing Ctrl-C cannot be, in a shell, is an exit; `/quit` and Ctrl-D are.
+
+Every argument on the command line is still a run. A bare `subcast` used to
+play the newest Morning Ireland, and that is what `/feed` opens now; a script
+asks for it with `--no-pick`, because a flag is a request for something and the
+shell is what a request for nothing looks like.
 
 ## Notes for maintainers
 

@@ -79,6 +79,22 @@ def media(
     )
 
 
+def in_config_dir(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """
+    Feeds live in the user's config directory, and a first run writes one:
+    keep every run in the tests out of it.
+    """
+
+    monkeypatch.setattr(
+        cli.config,
+        "CONFIG_DIR",
+        tmp_path,
+    )
+
+
 def test_published_captions_are_used_without_being_asked_for():
     """
     A site that already times its own captions should not need a flag:
@@ -534,13 +550,15 @@ def test_the_next_item_is_prepared_while_this_one_plays(monkeypatch):
     assert order == ["abc", "def"]
 
 
-def test_a_listing_is_played_item_after_item(monkeypatch):
+def test_a_listing_is_played_item_after_item(monkeypatch, tmp_path: Path):
     """
     The whole loop, because this is where the pieces are joined: both
     items play in turn, and the second one's preparation is already going
     when the first one starts - which a feed or a playlist is for.
     """
     import argparse as argparse_module
+
+    in_config_dir(monkeypatch, tmp_path)
 
     first = replace(media(), key="one", title="The first")
     second = replace(media(), key="two", title="The second")
@@ -549,7 +567,7 @@ def test_a_listing_is_played_item_after_item(monkeypatch):
     monkeypatch.setattr(
         cli,
         "parse_args",
-        lambda: argparse_module.Namespace(
+        lambda argv=None: argparse_module.Namespace(
             url="https://www.youtube.com/@The_RHS",
             list=False,
             limit=2,
@@ -597,7 +615,7 @@ def test_a_listing_is_played_item_after_item(monkeypatch):
 
     monkeypatch.setattr(cli, "play_item", play)
 
-    assert cli.main() == 0
+    assert cli.main(["--feed", "rhs"]) == 0
     assert order == [
         "prepared one",
         "prepared two",
@@ -608,6 +626,7 @@ def test_a_listing_is_played_item_after_item(monkeypatch):
 
 def test_an_item_must_be_resolved_and_heard_from_the_same_audio(
     monkeypatch,
+    tmp_path: Path,
 ):
     """
     The whole loop for a source mpv cannot play a page of, because this is
@@ -616,6 +635,8 @@ def test_an_item_must_be_resolved_and_heard_from_the_same_audio(
     playback still running rather than finished.
     """
     import argparse as argparse_module
+
+    in_config_dir(monkeypatch, tmp_path)
 
     order: list[str] = []
     release = threading.Event()
@@ -635,7 +656,7 @@ def test_an_item_must_be_resolved_and_heard_from_the_same_audio(
     monkeypatch.setattr(
         cli,
         "parse_args",
-        lambda: argparse_module.Namespace(
+        lambda argv=None: argparse_module.Namespace(
             url="https://example.test/page",
             list=False,
             limit=None,
@@ -694,7 +715,7 @@ def test_an_item_must_be_resolved_and_heard_from_the_same_audio(
     monkeypatch.setattr(cli, "prepare_item", prepare)
     monkeypatch.setattr(cli, "play_item", play)
 
-    assert cli.main() == 0
+    assert cli.main(["https://example.test/page"]) == 0
 
     # the audio is here before the first frame, the transcript after it
     assert order == ["resolved", "audio", "played", "transcribed"]
@@ -930,20 +951,22 @@ def test_a_feed_plays_the_url_it_saved(monkeypatch):
     assert target.description.startswith("sky: ")
 
 
-def test_no_url_opens_the_built_in_feed(monkeypatch, tmp_path: Path):
+def test_no_url_opens_the_feed_called_morning(monkeypatch, tmp_path: Path):
     """
-    Which programme opens by default is a fact about the feed, not about
-    the source: the source is decided by the URL, the same way it is for
-    any other feed.
+    Which programme opens by default is a fact about the feeds file, not
+    about the source: the source is decided by the URL, the same way it is
+    for any other feed.
     """
 
-    monkeypatch.setattr(cli.config, "CONFIG_DIR", tmp_path)
+    in_config_dir(monkeypatch, tmp_path)
+
+    cli.feeds.seed()
 
     source, url, description = cli.resolve_target(args())
 
-    assert url == cli.feeds.DEFAULT.url
+    assert url == cli.feeds.DEFAULT_URL
     assert source.name == "rte"
-    assert description.startswith(f"{cli.feeds.DEFAULT.name}: ")
+    assert description.startswith(f"{cli.feeds.DEFAULT_NAME}: ")
 
 
 def test_two_programmes_of_one_source_are_two_feeds(
@@ -955,11 +978,11 @@ def test_two_programmes_of_one_source_are_two_feeds(
     each with its own URL, and neither stands for the source.
     """
 
-    monkeypatch.setattr(cli.config, "CONFIG_DIR", tmp_path)
+    in_config_dir(monkeypatch, tmp_path)
 
     cli.feeds.add(
-        "morning-ireland",
-        cli.feeds.DEFAULT.url,
+        "morning",
+        cli.feeds.DEFAULT_URL,
     )
 
     cli.feeds.add(
@@ -967,7 +990,7 @@ def test_two_programmes_of_one_source_are_two_feeds(
         "https://www.rte.ie/radio/radio1/this-week/",
     )
 
-    morning = cli.resolve_target(args(feed="morning-ireland"))
+    morning = cli.resolve_target(args(feed="morning"))
     week = cli.resolve_target(args(feed="this-week"))
 
     assert morning.source.name == week.source.name == "rte"
@@ -984,7 +1007,7 @@ def test_the_feed_list_says_which_source_reads_each_one(
     is where the two pipelines have to be told apart.
     """
 
-    monkeypatch.setattr(cli.config, "CONFIG_DIR", tmp_path)
+    in_config_dir(monkeypatch, tmp_path)
 
     cli.feeds.add(
         "c4",
@@ -1007,8 +1030,6 @@ def test_the_feed_list_says_which_source_reads_each_one(
         in printed
     )
 
-    assert f"built in: {cli.feeds.DEFAULT.name}" in printed
-
 
 def test_a_feed_nothing_reads_is_still_listed(
     monkeypatch,
@@ -1020,7 +1041,7 @@ def test_a_feed_nothing_reads_is_still_listed(
     listing the ones that still work.
     """
 
-    monkeypatch.setattr(cli.config, "CONFIG_DIR", tmp_path)
+    in_config_dir(monkeypatch, tmp_path)
 
     cli.feeds.add(
         "old",
@@ -1037,7 +1058,7 @@ def test_saving_a_feed_says_which_source_reads_it(
     tmp_path: Path,
     capsys,
 ):
-    monkeypatch.setattr(cli.config, "CONFIG_DIR", tmp_path)
+    in_config_dir(monkeypatch, tmp_path)
 
     cli.remember_feed(
         argparse.Namespace(
@@ -1047,6 +1068,64 @@ def test_saving_a_feed_says_which_source_reads_it(
     )
 
     assert "Feed: this-week (rte)" in capsys.readouterr().out
+
+
+def test_no_arguments_at_all_is_the_shell():
+    assert cli.opens_shell([])
+
+
+def test_an_argument_is_a_run():
+    """
+    A flag is a request for something, so `subcast --subs` plays the
+    feed a run with no URL opens - which is what a bare run used to do, and what a script
+    that wants it asks for now.
+    """
+
+    assert not cli.opens_shell(["--subs"])
+
+
+def test_a_bare_run_opens_the_shell_with_the_command_line_s_own_parser(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    A command in the shell is parsed by the parser the command line uses,
+    so a command cannot come to mean something the options do not say.
+    """
+
+    in_config_dir(monkeypatch, tmp_path)
+
+    entered: list[argparse.Namespace] = []
+
+    def run(parse, once):
+
+        entered.append(parse(["--feeds"]))
+
+        return 0
+
+    monkeypatch.setattr(cli.shell, "run", run)
+
+    assert cli.main([]) == 0
+    assert [namespace.feeds for namespace in entered] == [True]
+
+
+def test_a_run_told_to_stop_ends_the_process(monkeypatch, capsys, tmp_path: Path):
+    in_config_dir(monkeypatch, tmp_path)
+
+    monkeypatch.setattr(
+        cli,
+        "parse_args",
+        lambda argv=None: args(url="https://example.test/page"),
+    )
+
+    def stopped(args):
+
+        raise cli.Stopped
+
+    monkeypatch.setattr(cli, "run_once", stopped)
+
+    assert cli.main(["https://example.test/page"]) == 130
+    assert "Interrupted." in capsys.readouterr().out
 
 
 def test_a_broadcast_is_only_captioned_when_asked_for_transcription():
@@ -1102,6 +1181,7 @@ def test_a_broadcast_is_neither_saved_nor_prepared_without_playback(
     flag: str,
     monkeypatch,
     capsys,
+    tmp_path: Path,
 ):
     """
     Saving would record until the broadcast ends, and captions come from
@@ -1110,12 +1190,14 @@ def test_a_broadcast_is_neither_saved_nor_prepared_without_playback(
 
     import argparse as argparse_module
 
+    in_config_dir(monkeypatch, tmp_path)
+
     live_item = replace(media(), live=True)
 
     monkeypatch.setattr(
         cli,
         "parse_args",
-        lambda: argparse_module.Namespace(
+        lambda argv=None: argparse_module.Namespace(
             url="https://www.youtube.com/watch?v=abc",
             list=False,
             limit=None,
@@ -1157,7 +1239,7 @@ def test_a_broadcast_is_neither_saved_nor_prepared_without_playback(
         lambda *args: pytest.fail("played a broadcast anyway"),
     )
 
-    assert cli.main() == 0
+    assert cli.main(["https://www.youtube.com/watch?v=abc"]) == 0
 
     output = capsys.readouterr().out
 
@@ -1170,13 +1252,15 @@ def test_a_broadcast_is_neither_saved_nor_prepared_without_playback(
         assert "--no-play leaves nothing to do" in output
 
 
-def test_a_stop_signal_ends_the_run_the_way_ctrl_c_does(monkeypatch):
+def test_a_stop_signal_ends_the_run_but_is_not_ctrl_c(monkeypatch):
     """
     A run owns a broadcast's capture, and the capture is its own process
     group: dying on a signal would leave yt-dlp and ffmpeg reading a
     broadcast that nothing is watching. SIGTERM and SIGHUP are turned into
-    what Ctrl-C raises, so the run's own teardown happens - which is what
-    stops the capture and removes its chunks.
+    `cli.Stopped`, so the run's own teardown happens - which is what stops
+    the capture and removes its chunks - and it is not the exception Ctrl-C
+    raises, because a shell stops one command for Ctrl-C and goes away for
+    a signal.
     """
 
     installed: dict[int, object] = {}
@@ -1194,7 +1278,7 @@ def test_a_stop_signal_ends_the_run_the_way_ctrl_c_does(monkeypatch):
         cli.signal.SIGHUP,
     }
 
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(cli.Stopped):
 
         installed[cli.signal.SIGTERM](cli.signal.SIGTERM, None)
 

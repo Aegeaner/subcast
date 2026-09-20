@@ -8,10 +8,9 @@ that, and the same source lists many programmes (Morning Ireland and This
 Week are both RTÉ) - so each one worth coming back to is a feed of its
 own, under a name of its own.
 
-`DEFAULT` is the one feed that is built in: the listing a run with no URL
-opens. It is a feed like any other rather than a property of its source,
-because which programme opens by default is a fact about the user's
-habits, not about RTÉ.
+`DEFAULT_NAME` is the feed a run with no URL opens, and the feed a machine
+with no `feeds.json` starts with. It is a feed like any other: it is
+removable, renamable, and nothing else in the tool treats it specially.
 
 An RSS document is a feed in the other sense of the word. `sources.podcast`
 reads it, and saving one here saves a listing like any other.
@@ -35,14 +34,31 @@ class Feed:
     url: str
 
 
-# The listing a run with no URL opens: Morning Ireland, the programme
-# subcast is built around. It lives here rather than on the RTÉ source
-# because a source is a pipeline, not a programme - and neither Morning
-# Ireland nor This Week belongs to it.
-DEFAULT = Feed(
-    name="Morning Ireland",
-    url="https://www.rte.ie/radio/radio1/morning-ireland/",
-)
+# The feed a run with no URL opens, and the one a machine with no feeds file
+# starts with: Morning Ireland, the programme subcast is built around. It is
+# an ordinary feed in every other way - the name and the URL are only what
+# `seed` writes the first time, and what a run with no URL looks for.
+DEFAULT_NAME = "morning"
+
+DEFAULT_URL = "https://www.rte.ie/radio/radio1/morning-ireland/"
+
+
+def seed() -> list[Feed]:
+    """
+    Give a machine that has no feeds file the feed a run with no URL opens.
+
+    Only a file that is not there is written: a feed that was removed is not
+    put back, and a file that is there - whatever is in it - is left alone.
+    """
+
+    if config.feeds_path().exists():
+
+        return load()
+
+    return add(
+        DEFAULT_NAME,
+        DEFAULT_URL,
+    )
 
 
 def load() -> list[Feed]:
@@ -157,14 +173,6 @@ def add(
             "give this one another --name, or --remove-feed it first"
         )
 
-    if name.strip().lower() == DEFAULT.name.lower():
-
-        raise RuntimeError(
-            f"{DEFAULT.name!r} is the built-in feed - the one a run with "
-            "no URL opens - so it is not a name to save this URL under; "
-            "give this one another --name"
-        )
-
     feeds = feeds + [
         Feed(
             name=name,
@@ -194,14 +202,6 @@ def remove(
 
     if len(kept) == len(feeds):
 
-        if name.strip().lower() == DEFAULT.name.lower():
-
-            raise RuntimeError(
-                f"{DEFAULT.name!r} is the built-in feed, not one of the "
-                "saved ones: it is what a run with no URL opens, and "
-                "there is nothing to forget"
-            )
-
         raise RuntimeError(_no_such(name))
 
     save(kept)
@@ -215,10 +215,8 @@ def find(
     """
     The feed called `name`, by name or by the number --feeds prints.
 
-    A name is tried before a number, so a feed that is itself called "2"
-    is still findable by it. The built-in feed answers to its own name
-    like any other, which is why it can be opened on purpose and not only
-    by giving no URL at all.
+    A name is tried before a number, so a feed that is itself called "2" is
+    still findable by it.
     """
 
     feeds = load()
@@ -230,10 +228,6 @@ def find(
         if feed.name.lower() == wanted:
 
             return feed
-
-    if DEFAULT.name.lower() == wanted:
-
-        return DEFAULT
 
     if wanted.isdigit() and 1 <= int(wanted) <= len(feeds):
 

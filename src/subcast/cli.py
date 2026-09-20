@@ -9,7 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
-from . import captionbar, config, feeds, listing, meta, picker
+from . import captionbar, config, feeds, listing, meta, picker, shell
 from .background import Background
 from .config import DEFAULT_WHISPER_MODEL, cache_dir, save_dir
 from .live import Capture, LiveCaptions
@@ -56,7 +56,7 @@ def caption_scale(
     return int(args.subs_scale)
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         description=(
@@ -64,8 +64,9 @@ def parse_args() -> argparse.Namespace:
             "when the source publishes none, and shown as they play. "
             "Give it a URL (YouTube video, playlist or channel, a BBC "
             "Audio page, a Bloomberg podcast, a podcast feed, or an "
-            "RTÉ Radio 1 programme or episode page) or nothing at all "
-            "for the latest Morning Ireland."
+            "RTÉ Radio 1 programme or episode page), or give it no "
+            "arguments at all and it waits for commands (/help lists "
+            "them)."
         )
     )
 
@@ -76,8 +77,8 @@ def parse_args() -> argparse.Namespace:
         help=(
             "YouTube video, playlist or channel URL, a BBC Audio page, "
             "a Bloomberg podcast series, a podcast feed, or an RTÉ "
-            "Radio 1 programme or episode URL. Omit for the latest "
-            "Morning Ireland."
+            "Radio 1 programme or episode URL. Omit for the feed called "
+            f"{feeds.DEFAULT_NAME!r}; no arguments at all opens the shell."
         ),
     )
 
@@ -107,9 +108,8 @@ def parse_args() -> argparse.Namespace:
         metavar="NAME",
         default="",
         help=(
-            "Open a saved feed by name (or by its number in --feeds), or "
-            "the built-in Morning Ireland: its entries are listed and "
-            "you choose what to play."
+            "Open a saved feed by name (or by its number in --feeds): "
+            "its entries are listed and you choose what to play."
         ),
     )
 
@@ -128,7 +128,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help=(
             "List the saved feeds with the source each one is read by, "
-            "and the built-in one, then exit."
+            "then exit."
         ),
     )
 
@@ -304,7 +304,20 @@ def parse_args() -> argparse.Namespace:
         ),
     )
 
-    return parser.parse_args()
+    return parser
+
+
+def parse_args(
+    argv: list[str] | None = None,
+) -> argparse.Namespace:
+    """
+    The arguments of a command line: this run's, or a shell command's.
+
+    The shell translates a command into the arguments it means and parses
+    them with this, so a command cannot grow a second set of options.
+    """
+
+    return build_parser().parse_args(argv)
 
 
 def play_limit(
@@ -381,9 +394,10 @@ def resolve_target(
     """
     What to work on: a URL, a saved feed or a YouTube search.
 
-    With no URL at all it is the built-in feed, and it goes through the
-    same path a saved one does: which programme opens by default is a fact
-    about the feed, not about the source that reads it.
+    With no URL at all it is the feed called `feeds.DEFAULT_NAME`, and it
+    goes through the same path a feed named on the command line does: which
+    programme opens by default is a fact about the feeds file, not about the
+    source that reads it.
     """
 
     if args.search:
@@ -401,22 +415,16 @@ def resolve_target(
             f'search "{args.search}"',
         )
 
-    if args.feed:
+    if args.feed or not args.url:
 
-        feed = feeds.find(args.feed)
+        feed = feeds.find(
+            args.feed or feeds.DEFAULT_NAME
+        )
 
         return Target(
             detect(feed.url),
             feed.url,
             f"{feed.name}: {feed.url}",
-        )
-
-    if not args.url:
-
-        return Target(
-            detect(feeds.DEFAULT.url),
-            feeds.DEFAULT.url,
-            f"{feeds.DEFAULT.name}: {feeds.DEFAULT.url}",
         )
 
     return Target(
@@ -438,7 +446,7 @@ def feed_source(
 
 def show_feeds() -> int:
     """
-    The saved feeds in the order they were added, and the built-in one.
+    The saved feeds in the order they were added.
 
     The source is not part of what was saved - the URL decides it - but a
     list that mixes a channel with an audio programme says which pipeline
@@ -461,11 +469,6 @@ def show_feeds() -> int:
             f"  {number:>3}. {feed.name}  "
             f"{feed_source(feed.url)}  {feed.url}"
         )
-
-    print(
-        f"  built in: {feeds.DEFAULT.name}  "
-        f"{feed_source(feeds.DEFAULT.url)}  {feeds.DEFAULT.url}"
-    )
 
     return 0
 
@@ -1320,14 +1323,24 @@ def play_item(
     )
 
 
+class Stopped(BaseException):
+    """
+    A signal asked the run to end.
+
+    Not a KeyboardInterrupt, because the two mean different things to a
+    shell: Ctrl-C stops the command that is running and the shell reads the
+    next one, where a SIGTERM is the process being told to go away.
+    """
+
+
 def stop_signals() -> None:
     """
     Stop the way Ctrl-C does when the run is asked to end.
 
     A run owns a broadcast's capture, and the two are separate process
     groups: dying on a signal would leave yt-dlp and ffmpeg reading a
-    broadcast that nothing is watching. Raising what Ctrl-C raises means
-    the same paths end it as any other stop.
+    broadcast that nothing is watching. Raising on the way to the same
+    teardown means the same paths end it as any other stop.
     """
 
     for name in ("SIGTERM", "SIGHUP"):
@@ -1341,16 +1354,86 @@ def stop_signals() -> None:
 
 def _stop_requested(signum, frame) -> None:
 
-    raise KeyboardInterrupt
+    raise Stopped
 
 
-def main() -> int:
+def main(
+    argv: list[str] | None = None,
+) -> int:
+    """
+    The command line, or the shell when there is no command line at all.
 
-    args = parse_args()
+    The arguments are an input rather than the process's own argv so that
+    what a run does can be said out loud, by a test or by anything else
+    that starts one.
+    """
+
+    arguments = sys.argv[1:] if argv is None else argv
+
+    args = parse_args(arguments)
 
     try:
 
         stop_signals()
+
+        try:
+
+            feeds.seed()
+
+        except OSError:
+
+            # A machine whose config cannot be written still plays URLs: the
+            # feed a run with no URL opens is then one the user adds.
+            pass
+
+        if opens_shell(arguments):
+
+            return shell.run(
+                parse_args,
+                run_once,
+            )
+
+        return run_once(args)
+
+    except (KeyboardInterrupt, Stopped):
+
+        print(
+            "\nInterrupted.",
+            flush=True,
+        )
+
+        return 130
+
+
+def opens_shell(
+    arguments: list[str],
+) -> bool:
+    """
+    Whether a command line asks for nothing at all, which is the shell.
+
+    Every argument is a run: `subcast --subs` plays the feed a run with no
+    URL opens, and so does anything else the command line can be told,
+    because a flag is a request for something.
+    """
+
+    return not arguments
+
+
+def run_once(
+    args: argparse.Namespace,
+) -> int:
+    """
+    One command line's worth of work, from finding items to playing them.
+
+    The shell runs this per command, which is why a command that goes wrong
+    is reported rather than ending the shell: a URL that does not work is
+    one command that did not work. KeyboardInterrupt is left alone here -
+    it passes through, so a shell stops the command it is running and a
+    command line ends, which is what each of them means by it - and so is
+    the signal that asks the whole run to end.
+    """
+
+    try:
 
         if args.feeds:
 
@@ -1620,15 +1703,6 @@ def main() -> int:
                 )
 
         return 0
-
-    except KeyboardInterrupt:
-
-        print(
-            "\nInterrupted.",
-            flush=True,
-        )
-
-        return 130
 
     except Exception as exc:  # noqa: BLE001 - the command reports it below
 
