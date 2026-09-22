@@ -470,10 +470,11 @@ def load_model(
 
         try:
 
-            model = WhisperModel(
+            model = _loaded(
+                WhisperModel,
                 model_name,
-                device=candidate_device,
-                compute_type=compute_type,
+                candidate_device,
+                compute_type,
             )
 
             break
@@ -497,6 +498,43 @@ def load_model(
         )
 
     return model
+
+
+def _loaded(
+    whisper_model,
+    name: str,
+    device: str,
+    compute_type: str,
+):
+    """
+    A model, from the copy on disk where there is one.
+
+    `WhisperModel` asks the Hugging Face Hub about the repository it is
+    loading unless it is told not to, and a model already on disk does not
+    need that answer. When the answer does not come - a rate limit, a link
+    that is down - the load never returns: the player is playing and the
+    caption block has nothing to draw, which is what a hung run looks like
+    (measured: a model read from disk loads in 0.4 seconds; the same model
+    through the Hub hung for minutes). A model that is not on disk yet is
+    fetched the ordinary way, which is the only time this needs the network.
+    """
+
+    try:
+
+        return whisper_model(
+            name,
+            device=device,
+            compute_type=compute_type,
+            local_files_only=True,
+        )
+
+    except Exception:  # noqa: BLE001 - not on disk yet: fetch it
+
+        return whisper_model(
+            name,
+            device=device,
+            compute_type=compute_type,
+        )
 
 
 def _download_caption_text(
@@ -1458,9 +1496,16 @@ class StreamedWhilePlaying(HeardFile):
 
             span.write_bytes(body)
 
-            # The overlap is already in the file: it was the end of the span
-            # before this one.
-            with self._audio.open("ab") as audio:
+            # The copy this run assembles is its own. A run that is killed
+            # leaves the one it was assembling behind (a stop removes it, a
+            # kill does not) and this file is written by appending a span at
+            # a time: writing the next run's spans after the last run's bytes
+            # makes a copy of the item with its own opening in the middle of
+            # it, which the run that plays it will hear. The overlap is
+            # already in the file - it was the end of the span before this
+            # one - so the bytes from before this span's own start are not
+            # written again.
+            with self._audio.open("ab" if number else "wb") as audio:
 
                 audio.write(
                     body[self._fetched - first:]

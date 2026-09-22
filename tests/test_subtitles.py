@@ -327,6 +327,58 @@ def test_settings_replace_the_defaults_rather_than_sitting_beside_them():
     assert model.seen["word_timestamps"] is True
 
 
+def test_a_model_on_disk_is_read_without_asking_the_hub():
+    """
+    Loading a cached model asks the Hugging Face Hub about its repository
+    unless it is told not to, and an answer that does not come leaves a run
+    playing with an empty caption block and nothing said about it. The copy on
+    disk is tried first; the network is asked only for a model that is not
+    there yet.
+    """
+
+    asked: list[dict] = []
+
+    def not_on_disk(name, **options):
+
+        asked.append(options)
+
+        if options.get("local_files_only"):
+
+            raise RuntimeError("no cached snapshot")
+
+        return "fetched"
+
+    assert (
+        subtitles._loaded(not_on_disk, "small.en", "cuda", "float16")
+        == "fetched"
+    )
+
+    assert asked[0]["local_files_only"] is True
+    assert "local_files_only" not in asked[1]
+
+    asked.clear()
+
+    def on_disk(name, **options):
+
+        asked.append(options)
+
+        return "cached"
+
+    assert (
+        subtitles._loaded(on_disk, "small.en", "cuda", "float16")
+        == "cached"
+    )
+
+    # read from disk, and only once: nothing asks the Hub for it
+    assert asked == [
+        {
+            "device": "cuda",
+            "compute_type": "float16",
+            "local_files_only": True,
+        }
+    ]
+
+
 class Word:
     """One word, as the model timed it and wrote it."""
 
@@ -1062,6 +1114,33 @@ def test_a_span_the_model_timed_none_of_drops_its_opening_line(
         (2.5, "00000.mp3"),
         (27.1, "00001.mp3"),
     ]
+
+    captioning.stop()
+
+
+def test_a_leftover_partial_copy_is_not_appended_to(monkeypatch, tmp_path: Path):
+    """
+    A run that is killed leaves the copy it was assembling behind - a stop
+    removes it, a kill does not - and that file is written a span at a time.
+    Writing this run's spans after the last run's bytes would make a copy of
+    the item with its own opening in the middle of it, which the run that
+    plays it would hear.
+    """
+
+    body = bytes(512)
+
+    captioning, item = streaming(monkeypatch, tmp_path, body)
+
+    leftover = tmp_path / "rte" / "one.mp3.part"
+    leftover.parent.mkdir(parents=True, exist_ok=True)
+    leftover.write_bytes(b"the bytes of a run that was killed")
+
+    captioning.start()
+
+    assert wait_for(lambda: subtitles.has_transcript(item))
+
+    # the copy is the item, whatever was left behind
+    assert (tmp_path / "rte" / "one.mp3").read_bytes() == body
 
     captioning.stop()
 

@@ -58,6 +58,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A streamed run's copy of an item is its own, not the last run's with
+  this one's written after it.** The bytes fetched for hearing are assembled
+  into the file the run keeps, a span at a time, and that file was opened for
+  appending. A run that was killed leaves its partial copy behind - a stop
+  removes it, a kill does not - so the next run wrote its spans after those
+  bytes, and what came out was the item with its own opening stitched into the
+  middle of it: a copy a later run plays once it is named like one. Measured on
+  two interrupted runs of one programme: one run's 11,356,000 bytes with the
+  next run's spans written after them, 16,156,196 bytes. The first span of a
+  run now starts the file, and the spans after it append.
+
 - **A long sentence's pieces are drawn when they are said, not spread evenly
   over it.** Whisper hands over sentences, a long one is cut into the pieces a
   caption line holds, and each piece was timed by an equal share of the whole
@@ -72,6 +83,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   one programme (79 seconds against 78, 3212 of 3294 words identical), and a
   test that fails without it puts a sentence's second piece at 6.67 seconds
   where the words put it at 0.65.
+
+- **A model already on disk is loaded without asking Hugging Face for it.**
+  `WhisperModel` asks the Hub about the repository unless it is told not to, and
+  when that answer does not come - a rate limit, a link that is down - the load
+  never returns: the player plays and the caption block has nothing to draw,
+  and nothing says so. Measured: the same model read from disk loads in 0.4
+  seconds, and a streamed run sat with an empty block for two and a half
+  minutes while its load waited on the Hub. The model is now loaded from disk
+  first, and fetched only when it is not there yet.
 
 - **A join between two spans no longer takes the words it runs through with
   it.** An item heard from a stream is decoded a span at a time, and each span
