@@ -79,20 +79,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   | seconds of cues written | 142s | 111s (the reference's speech: 117s) |
   | listening time for 180s of broadcast | 8.7s | 12.7s |
 
-- **A piece is placed by the clock its own audio carries, never by where mpv
-  has read up to.** The capture reads the first timestamp of each piece as it
-  comes down (`live.timestamp_of`) and hands it over already placed; a piece
-  whose clock cannot be read is placed where the piece before it ends, and a run
-  whose first piece cannot be read is refused rather than captioned at a guess.
-  Measured against one broadcast, 2026-09-20: mpv's `demuxer-cache-time` sits
-  0.05s to 10.0s behind the broadcast's own edge (median 5.1s - a whole piece),
-  because it looks at the playlist once a piece, so cues placed from it were on
-  screen before the words - over 27 pieces, a median 7.9s before the audio they
-  were heard from. Placed by the piece's own clock instead, the position matches
-  the audio exactly: bias 0.00s, min and max, over 30 pieces. Nothing asks the
-  player where it is any more: `GrowingCaptions.sample`, the reading-edge guards
-  (`live.edge_at` and its fill window) and the queue that waited for a first
-  reading all went with the anchor.
+- **A broadcast's captions are placed by where mpv has read up to, because the
+  audio carries no clock it can be placed by.** Placing a piece by its own first
+  timestamp assumed the stream says when the piece aired; measured 2026-09-21,
+  the pieces of a live item's audio rendition (`worstaudio/worst`, itag 233) are
+  raw ADTS AAC, and `ffprobe -show_entries stream=start_time` answers `N/A` for
+  every one of them. The first piece therefore could not be placed at all and the
+  run was refused with `the broadcast's audio would not say when it aired` - a
+  broadcast that had captions before this had none. `live.timestamp_of` and the
+  placement built on it are gone, with the state and the failure that went with
+  them; `LiveCaptions._place` gives each piece the moment mpv's reading edge was
+  at when it closed (`live.edge_at`, fed by `GrowingCaptions.sample`), which is
+  what the pipeline did before. Measured on the same broadcast: mpv reports
+  `time-pos` 9.3s and `demuxer-cache-time` 25.0s after eight seconds of playback,
+  and the capture against that playlist answers no pieces and that reason.
 
 - **A transcript is what the model wrote, heard without a voice filter, less
   the notes it makes about the soundtrack.** Two ways of keeping invention out

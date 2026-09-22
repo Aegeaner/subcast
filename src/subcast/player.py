@@ -563,12 +563,14 @@ def settled_live(
 
 class LiveView:
     """
-    mpv's side of captions that arrive while the item plays: the captions
-    that have landed since the last look, and what to say about them.
+    mpv's side of captions that arrive while the item plays: where it has
+    read up to, and the captions that have landed since the last look.
 
-    Nothing here asks mpv where it is: a broadcast's captions are timed on
-    the broadcast's own timeline (`live.LiveCaptions`), and mpv reads the
-    file against that timeline itself.
+    `cache-time` is the position mpv has read up to, which is the audio
+    being captured at that moment - the one reading that says where a piece
+    of it belongs, because the audio of a broadcast carries no clock of its
+    own. A source that does not report it leaves the playback position,
+    which is the same thing less mpv's own buffer.
     """
 
     def __init__(
@@ -592,9 +594,26 @@ class LiveView:
 
     def pass_over(self) -> None:
         """
-        One look: say what went wrong once, and hand the captions over when
-        there are new ones.
+        One look: sample the live edge, say what went wrong once, and hand
+        the captions over when there are new ones.
         """
+
+        edge = self.client.get(
+            "demuxer-cache-time"
+        )
+
+        position = self.client.get(
+            "time-pos"
+        )
+
+        seen = edge if edge is not None else position
+
+        if seen is not None:
+
+            self.live.sample(
+                time.monotonic(),
+                float(seen),
+            )
 
         for note in self.live.take_notes():
 

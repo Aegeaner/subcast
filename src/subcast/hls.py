@@ -8,10 +8,13 @@ on its own, where a pipe reading the broadcast has to survive the whole of
 it.
 
 What the playlist carries is what a piece is and how long it is. Where a
-piece belongs is not read from here: a live manifest also states the clock
-its first piece aired at (`#EXT-X-PROGRAM-DATE-TIME`), but a piece's own
-timestamps carry the same clock - measured, the two agree to the millisecond
-- and those come with the audio, so they are what `live.timestamp_of` reads.
+piece belongs is not read from here, and not from the piece either: a live
+manifest also states the clock its first piece aired at
+(`#EXT-X-PROGRAM-DATE-TIME`), but the pieces of the rendition this run hears
+come down as raw ADTS AAC - measured, `ffprobe` answers `N/A` for their
+start time - so nothing in the stream says when a piece aired. Where it goes
+is read off the player (`live.edge_at`), which is the only thing that knows
+where it is reading.
 """
 
 from __future__ import annotations

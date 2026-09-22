@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from subcast import hls, live
-from subcast.live import Piece
+from subcast.live import Piece, Placed
 
 # The clock a faked broadcast publishes against, and the first piece number
 # it counts from.
@@ -20,8 +20,8 @@ MANIFEST = "https://manifest.test/api/manifest/hls_playlist/pl.m3u8"
 
 PAGE = "https://www.youtube.com/watch?v=abc"
 
-# What the faked ffprobe says the first piece begins at.
-FIRST_STAMP = 5000.0
+# How long a piece of the faked broadcast runs for.
+PIECE_SECONDS = 5.0
 
 
 def a_playlist(
@@ -175,12 +175,8 @@ class Clock:
 
 class Programs:
     """
-    The outside programs a capture runs, faked: ffprobe says when the audio
-    it was asked about begins, ffmpeg writes the audio it was asked for, and
-    what each was asked is kept for the test to read.
-
-    The clock ffprobe answers with starts at `FIRST_STAMP` and moves a piece
-    at a time, the way a broadcast's audio does.
+    The outside programs a capture runs, faked: ffmpeg writes the audio it
+    was asked for, and what it was asked is kept for the test to read.
     """
 
     def __init__(self) -> None:
@@ -188,25 +184,11 @@ class Programs:
         self.commands: list[list[str]] = []
         self.written: list[Path] = []
         self.read: list[bytes] = []
-        self.stamps: list[float] = []
         self.broken = False
-        self.silent = False
 
     def run(self, command, **kwargs):
 
         self.commands.append(list(command))
-
-        if command[0] == "ffprobe":
-
-            if self.silent:
-
-                return subprocess.CompletedProcess(command, 0, "", "")
-
-            stamp = FIRST_STAMP + 5.0 * len(self.stamps)
-
-            self.stamps.append(stamp)
-
-            return subprocess.CompletedProcess(command, 0, f"{stamp}\n", "")
 
         if self.broken:
 
@@ -244,11 +226,6 @@ class Studio:
         monkeypatch.setattr(live.hls, "read", broadcast.read)
         monkeypatch.setattr(live.hls, "fetch", broadcast.fetch)
         monkeypatch.setattr(live.subprocess, "run", self.programs.run)
-
-        # The playlist states when its pieces aired on the wall clock, and
-        # the captions are placed on this run's own: both are the one clock
-        # in a test, so a piece's air time is exactly what the playlist said.
-        monkeypatch.setattr(live.time, "time", self.clock)
 
         self.capture = live.Capture(
             PAGE,
@@ -358,28 +335,29 @@ class TricklingCapture(FakeCapture):
 def captions(
     tmp_path: Path,
     capture: FakeCapture | None = None,
+    clock=None,
 ) -> live.LiveCaptions:
     return live.LiveCaptions(
         tmp_path / "abc",
         model=None,
         capture=capture or FakeCapture(),
+        clock=clock or (lambda: 100.0),
     )
 
 
 def pieces_in(
     tmp_path: Path,
     *sequences: int,
-    duration: float = 5.0,
-    at: float = 5000.0,
+    duration: float = PIECE_SECONDS,
 ) -> list[Piece]:
     """
-    Pieces of the broadcast on disk, as a capture hands them over: each one
-    beginning a piece-length after the one before it.
+    Pieces of the broadcast on disk, as a capture hands them over: there is
+    nothing to say where they go until the player has been asked.
     """
 
     written = []
 
-    for index, sequence in enumerate(sequences):
+    for sequence in sequences:
 
         path = tmp_path / f"chunk_{sequence:05d}.wav"
         path.write_bytes(b"")
@@ -388,7 +366,6 @@ def pieces_in(
             Piece(
                 sequence=sequence,
                 path=path,
-                at=at + index * duration,
                 duration=duration,
             )
         )
@@ -492,96 +469,133 @@ def test_a_piece_is_decoded_on_its_own(tmp_path: Path):
     assert command[-1] == str(tmp_path / "chunk_00042.part")
 
 
-def test_a_piece_is_asked_when_it_began(monkeypatch, tmp_path: Path):
+def test_a_piece_lands_where_the_broadcast_was_when_it_closed(
+    tmp_path: Path,
+    monkeypatch,
+):
     """
-    A piece's own clock is what a caption is placed by, so the capture asks
-    the audio itself: ffprobe reads the stream's first timestamp, and a piece
-    that will not say is not placed at a guess.
+    A piece that closed just now began playing a piece-length ago, so its
+    words belong where mpv's reading edge was then - the one reading that
+    says where a piece goes, because the audio of a broadcast says nothing
+    about when it aired.
     """
-
-    asked: list[list[str]] = []
-
-    def run(command, **kwargs):
-
-        asked.append(list(command))
-
-        return subprocess.CompletedProcess(command, 0, "9812.345011\n", "")
-
-    monkeypatch.setattr(live.subprocess, "run", run)
-
-    assert live.timestamp_of(tmp_path / "chunk_00042.wav") == 9812.345011
-
-    command = asked[0]
-
-    assert command[0] == "ffprobe"
-    assert command[command.index("-select_streams") + 1] == "a:0"
-    assert command[-1] == str(tmp_path / "chunk_00042.wav")
 
     monkeypatch.setattr(
-        live.subprocess,
-        "run",
-        lambda command, **kwargs: subprocess.CompletedProcess(command, 0, "", ""),
+        live,
+        "transcribe_cues",
+        lambda model, path, **settings: [(1.0, 3.0, "Good morning.")],
+    )
+    monkeypatch.setattr(live.LiveCaptions, "_stitch", lambda self, p, c, d, s: False)
+
+    job = captions(
+        tmp_path,
+        capture=FakeCapture(pieces_in(tmp_path, 0)),
+        clock=lambda: 100.0 + PIECE_SECONDS,
     )
 
-    assert live.timestamp_of(tmp_path / "chunk_00042.wav") is None
+    job.sample(100.0, 5000.0)
+
+    job._work()
+
+    # 5000 is where mpv had read up to at wall 100, which is a piece-length
+    # before the clock the piece closed on.
+    assert job.cues() == [(5001.0, 5003.0, "Good morning.")]
+    assert job.revision() == 1
 
 
-def test_a_piece_is_placed_by_its_own_clock(monkeypatch):
-    """
-    What the capture hands over is already placed: each piece of a broadcast
-    says at what moment of it the audio begins, and that is where its words
-    go. Nothing is read off the player, which is what put captions on screen
-    before the words.
-    """
-
-    studio = Studio(monkeypatch, Broadcast())
-
-    pieces = studio.look()
-
-    assert [piece.at for piece in pieces] == [FIRST_STAMP, FIRST_STAMP + 5.0]
-    assert [piece.duration for piece in pieces] == [5.0, 5.0]
-
-
-def test_a_piece_that_will_not_say_when_it_began_is_placed_after_the_one_before(
+def test_nothing_is_written_before_mpv_has_said_where_it_is(
+    tmp_path: Path,
     monkeypatch,
 ):
     """
-    A piece whose clock cannot be read is placed where the piece before it
-    ends - which is where the pieces of a playlist tile - rather than left
-    with no place on the timeline.
+    A piece heard before the first reading of the live edge cannot be
+    placed, and a caption on the wrong second is worse than none.
     """
 
-    studio = Studio(monkeypatch, Broadcast())
+    monkeypatch.setattr(
+        live,
+        "transcribe_cues",
+        lambda model, path, **settings: [(1.0, 3.0, "Good morning.")],
+    )
 
-    first = studio.look()
+    job = captions(tmp_path, capture=FakeCapture(pieces_in(tmp_path, 0)))
 
-    studio.programs.silent = True
+    job._work()
 
-    studio.airs(1)
-
-    (later,) = studio.look(after=first[-1].sequence)
-
-    assert later.at == first[-1].at + first[-1].duration
-
-    assert "would not say when it aired" in " ".join(studio.capture.take_notes())
+    assert job.cues() == []
+    assert job.revision() == 0
+    assert not job.srt_path.exists()
+    assert job.failure_message() is None
 
 
-def test_a_broadcast_whose_audio_will_not_say_when_it_aired_is_refused(
+def test_a_slow_transcriber_does_not_move_the_captions(
+    tmp_path: Path,
     monkeypatch,
 ):
     """
-    Nothing read so far and no clock to start from is a caption with nowhere
-    to go, which is worse than no captions: the capture says so instead.
+    Where a piece belongs is settled when it closes, not when Whisper gets to
+    it: a machine that takes a minute over a piece must lose captions to the
+    queue, never put them at a moment the broadcast has gone past.
     """
 
-    studio = Studio(monkeypatch, Broadcast())
+    monkeypatch.setattr(
+        live,
+        "transcribe_cues",
+        lambda model, path, **settings: [(1.0, 3.0, "Good morning.")],
+    )
+    monkeypatch.setattr(live.LiveCaptions, "_stitch", lambda self, p, c, d, s: False)
 
-    studio.programs.silent = True
+    now = [100.0 + PIECE_SECONDS]
 
-    assert studio.look() == []
+    job = captions(
+        tmp_path,
+        capture=FakeCapture(pieces_in(tmp_path, 0)),
+        clock=lambda: now[0],
+    )
 
-    assert studio.capture.finished() is True
-    assert "would not say when it aired" in studio.capture.reason()
+    job.sample(100.0, 5000.0)
+
+    job._place(job._capture.chunks(after=-1))
+
+    now[0] += 60.0
+
+    job.transcribe(job._queued.popleft())
+
+    assert job.cues() == [(5001.0, 5003.0, "Good morning.")]
+
+
+def test_the_live_edge_moves_with_the_wall_clock():
+    """
+    One reading of what mpv has read up to places a moment before it:
+    between reads the edge advances with the clock.
+    """
+
+    assert live.edge_at([(100.0, 5000.0)], 85.0) == 4985.0
+    assert live.edge_at([(100.0, 5000.0)], 112.0) == 5012.0
+    assert live.edge_at([(100.0, 5000.0), (110.0, 5010.0)], 105.0) == 5005.0
+    assert live.edge_at([], 100.0) is None
+
+
+def test_readings_that_outrun_the_clock_are_not_a_timeline():
+    """
+    At the start of a run mpv reads faster than the broadcast is published
+    while it fills its buffer - 27 seconds of stream in 16 seconds of clock
+    on one run - and the oldest of those readings is far behind where the
+    broadcast really is. Placing a piece from it put the first piece
+    thirteen seconds early, where mpv had already played past it, so its
+    captions were never seen.
+    """
+
+    filling = [(100.0, 5000.0), (116.0, 5027.0)]
+
+    # the moment wanted is 15 seconds back, and the broadcast was at 5012
+    # then: not the 5001 the oldest reading would have claimed
+    assert live.edge_at(filling, 101.0) == 5012.0
+
+    # once the readings keep time with the clock, they are a timeline again
+    steady = [(100.0, 5000.0), (116.0, 5016.0)]
+
+    assert live.edge_at(steady, 101.0) == 5001.0
 
 
 def test_the_window_opens_on_the_pieces_being_broadcast_now(tmp_path, monkeypatch):
@@ -849,6 +863,8 @@ def test_every_closed_piece_is_heard_as_they_are_deleted(tmp_path, monkeypatch):
         capture=TricklingCapture(pieces_in(tmp_path, 0, 1, 2, 3)),
     )
 
+    job.sample(100.0, 5000.0)
+
     job._work()
 
     assert heard == [
@@ -862,32 +878,34 @@ def test_every_closed_piece_is_heard_as_they_are_deleted(tmp_path, monkeypatch):
 def test_a_backlog_is_placed_by_when_each_piece_closed(tmp_path, monkeypatch):
     """
     One look can find several pieces closed at once - a slow poll or a missed
-    one - and they did not all close at that moment. Each is placed by the
-    clock the playlist gave it, so nothing drifts with the size of the
-    backlog.
+    one - and they did not all close at that moment: the newest ended here,
+    the one before it a piece-length earlier. Walking a batch backwards from
+    the reading edge is what keeps them from landing on one moment, so that
+    nothing drifts with the size of the backlog.
     """
 
     hearing(
         monkeypatch,
         [(1.0, 2.0, "first")],
-        [(6.0, 7.0, "second")],
+        [(1.0, 2.0, "second")],
     )
-    monkeypatch.setattr(live.LiveCaptions, "_stitch", lambda self, p, c, d, s: True)
+    monkeypatch.setattr(live.LiveCaptions, "_stitch", lambda self, p, c, d, s: False)
 
-    first, second = pieces_in(tmp_path, 4, 5, at=5000.0)
+    job = captions(
+        tmp_path,
+        capture=FakeCapture(pieces_in(tmp_path, 4, 5)),
+        clock=lambda: 100.0 + PIECE_SECONDS,
+    )
 
-    job = captions(tmp_path)
+    job.sample(100.0, 5000.0)
 
-    # What the capture hands over is already placed: a piece says where it is.
-    assert [piece.at for piece in (first, second)] == [5000.0, 5005.0]
+    job._work()
 
-    for piece in (first, second):
-
-        job.transcribe(piece)
-
+    # the newest piece begins where mpv's edge was a piece-length ago, and
+    # the one before it a piece-length before that - not both at one moment
     assert job.cues() == [
-        (5001.0, 5002.0, "first"),
-        (5006.0, 5007.0, "second"),
+        (4996.0, 4997.0, "first"),
+        (5001.0, 5002.0, "second"),
     ]
 
 
@@ -918,11 +936,11 @@ def test_the_pass_hears_the_words_in_front_of_the_piece(tmp_path, monkeypatch):
 
     job = captions(tmp_path)
 
-    job.transcribe(Piece(0, first.path, 5000.0, 5.0))
+    job.transcribe(Placed(first, 5000.0))
 
     assert job.cues() == [(5001.0, 5003.0, "Good morning.")]
 
-    job.transcribe(Piece(1, second.path, 5005.0, 5.0))
+    job.transcribe(Placed(second, 5005.0))
 
     # The captions stopped at 5003 and the model is given from 5000.5: the
     # piece before, less all but the last 2.5 seconds of what was said.
@@ -955,13 +973,13 @@ def test_the_end_of_a_piece_waits_for_the_pass_that_hears_its_ending(
 
     job = captions(tmp_path)
 
-    job.transcribe(Piece(0, first.path, 5000.0, 5.0))
+    job.transcribe(Placed(first, 5000.0))
 
     # "to the very end" ends inside the last second and a half of the piece,
     # so only the cue before it is said
     assert [text for _, _, text in job.cues()] == ["early"]
 
-    job.transcribe(Piece(1, second.path, 5005.0, 5.0))
+    job.transcribe(Placed(second, 5005.0))
 
     # the next pass hears it again with the words after it
     assert [text for _, _, text in job.cues()] == [
@@ -996,8 +1014,8 @@ def test_a_line_the_model_heard_from_the_words_before_is_dropped(
 
     job = captions(tmp_path)
 
-    job.transcribe(Piece(0, first.path, 5000.0, 5.0))
-    job.transcribe(Piece(1, second.path, 5005.0, 5.0))
+    job.transcribe(Placed(first, 5000.0))
+    job.transcribe(Placed(second, 5005.0))
 
     assert [text for _, _, text in job.cues()] == [
         "already said",
@@ -1017,12 +1035,14 @@ def test_what_waits_too_long_is_dropped_and_said_once(tmp_path, monkeypatch):
 
     job = captions(tmp_path)
 
-    job._queued.extend(pieces)
+    job._queued.extend(
+        Placed(piece, 5000.0) for piece in pieces
+    )
 
     job._drop_what_cannot_be_heard()
 
     # three may wait, so the two oldest of five are dropped
-    assert [piece.sequence for piece in job._queued] == [2, 3, 4]
+    assert [placed.piece.sequence for placed in job._queued] == [2, 3, 4]
 
     assert not pieces[0].path.exists()
     assert not pieces[1].path.exists()
@@ -1034,7 +1054,9 @@ def test_what_waits_too_long_is_dropped_and_said_once(tmp_path, monkeypatch):
     assert "cannot keep up" in notes[0]
 
     # said once, not once per piece
-    job._queued.extend(pieces_in(tmp_path, 5, at=5025.0))
+    job._queued.extend(
+        Placed(piece, 5025.0) for piece in pieces_in(tmp_path, 5)
+    )
 
     job._drop_what_cannot_be_heard()
 
@@ -1053,6 +1075,8 @@ def test_the_summary_counts_what_the_captions_came_to(tmp_path, monkeypatch):
     monkeypatch.setattr(live.LiveCaptions, "_stitch", lambda self, p, c, d, s: False)
 
     job = captions(tmp_path, FakeCapture(pieces_in(tmp_path, 0, 1)))
+
+    job.sample(100.0, 5000.0)
 
     job._work()
 
@@ -1074,7 +1098,12 @@ def test_a_chunk_that_cannot_be_heard_is_said_once(tmp_path, monkeypatch):
 
     job = captions(tmp_path)
 
-    job.transcribe(Piece(0, tmp_path / "chunk_00000.wav", 5000.0, 5.0))
+    job.transcribe(
+        Placed(
+            Piece(0, tmp_path / "chunk_00000.wav", PIECE_SECONDS),
+            5000.0,
+        )
+    )
 
     assert job.failure_message() == (
         "    Live captions failed: a chunk could not be transcribed "

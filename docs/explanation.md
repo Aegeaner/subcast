@@ -262,10 +262,10 @@ come and go.
 - **A piece is its number, not its place in a listing.** Files are deleted as
   they are heard, so a listing shifts under its own cursor. Walking by position
   dropped every second piece of one broadcast.
-- **Placement is settled when a piece closes**, from what the piece says about
-  itself, and carried until it is heard. A transcriber a minute behind then
-  costs a minute of delay instead of captions at a moment the broadcast has gone
-  past. A queue longer than three pieces drops the oldest and says so once.
+- **Placement is settled when a piece closes**, from where the player says it
+  has read up to, and carried until it is heard. A transcriber a minute behind
+  then costs a minute of delay instead of captions at a moment the broadcast has
+  gone past. A queue longer than three pieces drops the oldest and says so once.
 - **A piece is heard with the tail of the one before it**, so the model is not
   left to make out a sentence from its middle. The line it makes of those words
   and the piece together is cut where the captions stopped, word by word,
@@ -275,15 +275,17 @@ come and go.
   closes, and what it adds is written at once. A caption's delay is that one
   piece, which must fit inside mpv's buffer.
 
-**Where a cue belongs is what the piece says.** A piece of a broadcast carries
-the broadcast's own timeline in its timestamps, and that is the timeline the
-player reads a subtitle file against, so a caption is written at the moment the
-audio it came from begins. Nothing is inferred from where the player has read up
-to: mpv looks at the playlist once a piece, so its reading edge sits a whole
-piece behind the broadcast, and captions anchored on it were on screen several
-seconds before the words, on every piece of one measured run. A cue timed from
-the playback position would be worse still - a buffer's worth early, because the
-player is behind the publisher's live edge.
+**Where a cue belongs is what the player says.** A piece of a broadcast carries
+no clock a run can read: the audio of a YouTube live stream comes down as raw
+ADTS AAC, whose first timestamp `ffprobe` answers `N/A` for, so nothing in the
+stream says when a piece aired. The one thing that knows where the broadcast is,
+is the player reading it, so a piece is placed where mpv's reading edge was when
+it closed - a reading carried back along the wall clock, because between
+readings the edge moves with it. Placing from the reading edge puts a cue a
+little before the words, by as much as the edge lags the publisher's live edge,
+which is what a listener sees as captions running early. A cue timed from the
+playback position instead would be worse: the player is a whole buffer behind
+the edge, so those captions would be that much later than the words.
 
 The hearing is greedy, with one beam, and nothing is heard through a voice
 filter. Asking the model to drop what is not speech and put the timestamps back
@@ -304,8 +306,8 @@ reload makes mpv log its whole track list; turning every module down would take
 the terminal's subtitles with it.
 
 Pausing, or seeking back into the DVR window, leaves the captions where they
-were: they are placed on the broadcast's own timeline, and only watching at the
-live edge keeps them lined up.
+were: they are placed on the timeline the player reads the stream against, and
+only watching at the live edge keeps them lined up.
 
 Two options are refused on a broadcast rather than quietly doing the wrong
 thing: `--save`, because there is no end to download up to, and `--no-play`,

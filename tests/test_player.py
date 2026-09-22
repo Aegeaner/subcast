@@ -486,7 +486,12 @@ def place(
     path = tmp_path / f"chunk_{sequence:05d}.wav"
     path.write_bytes(b"")
 
-    job.transcribe(live.Piece(sequence, path, at, PIECE_SECONDS))
+    job.transcribe(
+        live.Placed(
+            live.Piece(sequence, path, PIECE_SECONDS),
+            at,
+        )
+    )
 
     return job
 
@@ -614,14 +619,15 @@ def test_the_capture_starts_when_something_begins_watching(
     assert started == [1]
 
 
-def test_a_piece_is_placed_where_the_broadcast_says_it_is(
+def test_a_piece_is_placed_by_where_mpv_has_read_up_to(
     tmp_path: Path,
     monkeypatch,
 ):
     """
-    A cue is written on the broadcast's own timeline, so mpv reads it against
-    the same clock it plays against - nothing about where mpv has read up to
-    enters into it.
+    `cache-time` is the position mpv has read up to, which is the audio being
+    captured right now - so the piece that has just closed belongs a
+    piece-length behind it, not where playback is. It is the only reading
+    that can place one: the audio of a broadcast carries no clock of its own.
     """
 
     monkeypatch.setattr(
@@ -636,25 +642,34 @@ def test_a_piece_is_placed_where_the_broadcast_says_it_is(
     )
     monkeypatch.setattr(live.LiveCaptions, "_stitch", lambda self, p, c, d, s: False)
 
+    wall = [100.0]
+
+    monkeypatch.setattr(player.time, "monotonic", lambda: wall[0])
+
     captions = live.LiveCaptions(
         tmp_path / "abc",
         model=None,
         capture=live.Capture("https://example.test/watch"),
+        clock=lambda: wall[0],
     )
+
+    player.LiveView(
+        LiveClient(cache_time=5000.0),
+        captions,
+    ).pass_over()
 
     chunk = tmp_path / "chunk_00000.wav"
     chunk.write_bytes(b"")
 
-    captions.transcribe(
-        live.Piece(
-            sequence=0,
-            path=chunk,
-            at=5000.0,
-            duration=PIECE_SECONDS,
-        )
-    )
+    captions._place([live.Piece(0, chunk, PIECE_SECONDS)])
+    captions.transcribe(captions._queued.popleft())
 
-    assert captions.cues() == [(5001.0, 5002.0, "Good morning.")]
+    # A piece-length behind the live edge, plus the second the piece's own
+    # cue starts at.
+    assert captions.cues()[0][0] == pytest.approx(
+        5000.0 - PIECE_SECONDS + 1.0,
+        abs=1.0,
+    )
 def test_a_live_failure_is_said_once(
     tmp_path: Path,
     monkeypatch,

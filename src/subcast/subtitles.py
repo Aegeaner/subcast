@@ -59,8 +59,7 @@ class GrowingCaptions:
     item still arriving by range (`StreamedWhilePlaying`). Playback drives
     either the same way: the subtitle file is handed to mpv once and
     reloaded whenever `revision` changes, so a caption is on screen as soon
-    as it is written. Every one of them times its cues on the item's own
-    timeline, which is why none of them asks the player where it is.
+    as it is written.
     """
 
     srt_path: Path
@@ -91,6 +90,19 @@ class GrowingCaptions:
         """
 
         raise NotImplementedError
+
+    def sample(
+        self,
+        wall: float,
+        edge: float,
+    ) -> None:
+        """
+        Where mpv has read up to, and when it said so.
+
+        Carried because a broadcast is placed from that reading, and
+        ignored by a source whose cues are already on the item's own
+        timeline.
+        """
 
     def take_notes(self) -> list[str]:
         """

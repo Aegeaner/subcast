@@ -175,7 +175,6 @@ alone, so a stock mpv works.
 | `Published captions (<language>): <n> cues` | Published captions were used. |
 | `Live broadcast: captions made as it plays` | The item is a broadcast, and this run transcribes it as it airs. |
 | `Live captions failed: <reason>; playing without them.` | The broadcast's capture or transcription gave up. Playback carries on. |
-| `Live captions failed: the broadcast's audio would not say when it aired; playing without them.` | The first piece's timestamps could not be read, so there is no place on the broadcast's timeline to put a cue. |
 | `Live captions: the broadcast's playlist was renewed.` | The URL the playlist was published under expired while the broadcast was still airing, and a fresh one was resolved. Said once. |
 | `Live captions: a piece of the broadcast could not be fetched.` | One piece was lost, and the broadcast carries on without it. Said once. |
 | `Live captions: a piece of the broadcast could not be decoded (<reason>).` | One piece was fetched but would not decode, and the broadcast carries on without it. Said once. |

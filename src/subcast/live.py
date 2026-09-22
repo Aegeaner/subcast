@@ -15,12 +15,13 @@ made captions come and go:
 *   A piece is identified by the number the playlist gave it, never by where
     it sits in a listing: the files are deleted as they are heard, and a
     listing is not an identity.
-*   Where a cue belongs is read off the piece itself: a piece of a broadcast
-    says at what moment of the broadcast it starts, and that is where its
-    words are. Nothing is inferred from where the player has read up to -
-    measured, mpv's reading edge is a whole piece behind the broadcast for as
-    long as it takes it to look at the playlist again, and captions placed
-    from it were on screen seconds before the words.
+*   Where a cue belongs is decided when its piece closes, from mpv's own
+    reading edge, and carried with the piece until it is heard. A piece of a
+    broadcast carries no clock a run can read - measured, YouTube's live
+    pieces are raw ADTS AAC, whose start time ffprobe answers `N/A` - so the
+    reading edge is the only timeline the captions can be written on, and
+    what a transcriber behind costs is delay rather than captions placed at
+    the wrong moment.
 *   What waits to be heard is a short queue: a machine slower than realtime
     drops the oldest pieces and says so, because for a broadcast being
     incomplete is better than falling behind for good.
@@ -51,13 +52,12 @@ from .player import LIVE_AUDIO_FORMAT
 from .srt import split_cues, write_srt
 from .subtitles import GrowingCaptions, transcribe_cues
 
-# What reads a piece's own clock: how many seconds into the broadcast its
-# audio begins. ffprobe answers in one process - measured at 40ms for a piece
-# - and the answer is the whole of where a cue belongs, so a piece whose
-# timestamp cannot be read is placed after the one before it rather than
-# guessed at.
-TIMESTAMP_TRIES = 2
-TIMESTAMP_SECONDS = 20.0
+# How much faster than the clock mpv's reading edge may move before it is
+# taken for what it is: mpv filling its buffer rather than the broadcast's
+# own timeline. Measured at the start of a run: 27 seconds of stream in 16
+# seconds of wall clock, and extrapolating from that reading placed the
+# first piece thirteen seconds early, where nothing would show it.
+STEADY_RATIO = 1.2
 
 # How often the playlist is read. A piece is five seconds of broadcast, so
 # this is how long after it closed the run can know about it - and reading
@@ -132,8 +132,11 @@ LIVE_HEARING = {
 LOOP_LIMIT = 1
 LOOP_SECONDS = 15.0
 
-# How often to look for a piece that has been closed.
+# How often to look for a piece that has been closed, and how far back the
+# samples of mpv's reading edge are kept (a few piece lengths, so the piece
+# that just closed can be placed).
 POLL_SECONDS = 0.5
+SAMPLES_KEPT = 300
 
 # How long a capture process is given to go away before it is killed.
 STOP_SECONDS = 5.0
@@ -148,17 +151,76 @@ MAX_QUEUED_CHUNKS = 3
 @dataclass(frozen=True)
 class Piece:
     """
-    A piece of the broadcast on disk, and where in the broadcast it begins.
+    A piece of the broadcast on disk, and how long it runs.
 
-    `at` is the moment the piece's own audio says it starts: the broadcast's
-    timeline, which is the timeline a cue is written on and the one mpv reads
-    a subtitle file against.
+    Nothing here says where the piece belongs, because its audio does not
+    say: a piece of a live stream carries no clock a run can read - measured,
+    YouTube's live pieces are raw ADTS AAC, and ffprobe answers `N/A` for
+    their start time. The place comes from the player, which is the only
+    thing that knows where it is reading the stream.
     """
 
     sequence: int
     path: Path
-    at: float
     duration: float
+
+
+@dataclass(frozen=True)
+class Placed:
+    """
+    A piece, and where mpv's timeline has the audio it holds.
+
+    `at` is where the player had read up to when the piece closed, carried
+    back along the wall clock when it was noticed a moment later
+    (`edge_at`). mpv reads the stream at the live edge and plays it a buffer
+    behind, so the reading edge at the moment a word airs is the moment mpv
+    reaches it - which makes it the one place a caption can be written.
+    """
+
+    piece: Piece
+    at: float
+
+
+def edge_at(
+    samples: Sequence[tuple[float, float]],
+    when: float,
+) -> float | None:
+    """
+    Where mpv had read up to at a given moment.
+
+    The live edge is sampled with the playback clock, so between samples it
+    moves with the wall clock: one reading is enough to place a moment
+    before it.
+
+    Readings moving faster than the clock are not the broadcast's timeline
+    at all - they are mpv filling its buffer at the start of a run, and the
+    oldest of them is seconds behind where the broadcast actually is.
+    Placing from one puts a piece before the run began, where nothing shows
+    it; the newest reading, carried back by the clock, is what those are
+    good for.
+    """
+
+    if not samples:
+
+        return None
+
+    oldest_wall, oldest = samples[0]
+    newest_wall, newest = samples[-1]
+
+    if newest - oldest > (newest_wall - oldest_wall) * STEADY_RATIO:
+
+        return newest - (newest_wall - when)
+
+    chosen = samples[0]
+
+    for sample in samples:
+
+        if sample[0] <= when:
+            chosen = sample
+        else:
+            break
+
+    return chosen[1] + (when - chosen[0])
 
 
 def manifest_url(
@@ -233,69 +295,6 @@ def decode_command(
         "wav",
         str(dest),
     ]
-
-
-def timestamp_of(
-    piece: Path,
-) -> float | None:
-    """
-    When in the broadcast a piece of audio begins, or None if it will not say.
-
-    A live stream's pieces carry the broadcast's own timeline, which is the
-    one a caption is written on and the one a player reads a subtitle file
-    against: reading it here is what makes a cue land on the words rather
-    than on where the player happened to have read up to.
-
-    What is asked is the piece as it came down, not the audio decoded out of
-    it: a wav is written under a timestamp of its own and answers `N/A`.
-    """
-
-    for _attempt in range(TIMESTAMP_TRIES):
-
-        try:
-
-            completed = subprocess.run(
-                [
-                    "ffprobe",
-                    "-v",
-                    "error",
-                    "-select_streams",
-                    "a:0",
-                    "-show_entries",
-                    "stream=start_time",
-                    "-of",
-                    "csv=p=0",
-                    str(piece),
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=TIMESTAMP_SECONDS,
-            )
-
-        except (OSError, subprocess.TimeoutExpired):
-
-            continue
-
-        if completed.returncode != 0:
-
-            continue
-
-        stamps = completed.stdout.split()
-
-        if not stamps:
-
-            continue
-
-        try:
-
-            return float(stamps[0])
-
-        except ValueError:
-
-            continue
-
-    return None
 
 
 def stitch_command(
@@ -470,8 +469,6 @@ class Capture:
         self._pieces: deque[Piece] = deque()
         self._taken = -1
         self._opening = True
-        self._clocked = False
-        self._last = 0.0
         self._read_at = 0.0
         self._misses = 0
         self._renewals = 0
@@ -713,17 +710,6 @@ class Capture:
         # the init segment is what every piece of it is read with.
         source.write_bytes((self._init or b"") + body)
 
-        # The piece's clock is read from the piece: the audio that is decoded
-        # out of it is written under a timestamp of its own, and it is the
-        # container that carries the broadcast's.
-        at = self._begins_at(source, segment.duration)
-
-        if self._failure is not None:
-
-            source.unlink(missing_ok=True)
-
-            return
-
         try:
 
             completed = subprocess.run(
@@ -766,50 +752,9 @@ class Capture:
             Piece(
                 sequence=segment.sequence,
                 path=chunk,
-                at=at,
                 duration=segment.duration,
             )
         )
-
-    def _begins_at(
-        self,
-        piece: Path,
-        duration: float,
-    ) -> float:
-        """
-        Where in the broadcast a piece begins, as its own audio says.
-
-        A piece of a live stream carries the broadcast's timeline in its
-        timestamps, and that is the timeline a caption is written on: where
-        the player has read up to is a different thing, measured a whole
-        piece behind the broadcast while the player is between one look at
-        the playlist and the next.
-
-        A piece whose clock cannot be read is placed after the one before it,
-        which is where the pieces of a playlist tile anyway.
-        """
-
-        stamp = timestamp_of(piece)
-
-        if stamp is not None:
-
-            self._clocked = True
-            self._last = stamp + duration
-
-            return stamp
-
-        if not self._clocked:
-
-            # Nothing read so far and no clock to start from: a caption with
-            # no place on the timeline is worse than no captions, and the run
-            # is better told why.
-            self._failure = "the broadcast's audio would not say when it aired"
-
-            return self._last
-
-        self._note("a piece of the broadcast would not say when it aired")
-
-        return self._last
 
     def _download(
         self,
@@ -971,6 +916,7 @@ class LiveCaptions(GrowingCaptions):
         stem: Path,
         model,
         capture: Capture,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
 
         self.srt_path = stem.with_suffix(".live.srt")
@@ -978,15 +924,26 @@ class LiveCaptions(GrowingCaptions):
         self._model = model
         self._capture = capture
 
+        # The clock a piece's place is read against, and the one the player
+        # samples the reading edge with: the same clock, or a piece is
+        # placed at a moment nothing is playing.
+        self._clock = clock
+
         self._lock = threading.Lock()
         self._cues: list[tuple[float, float, str]] = []
         self._revision = 0
         self._failure: str | None = None
         self._notes: list[str] = []
 
-        # The broadcast time the captions have been written up to. The
-        # first pass has nothing behind it, and stream time never goes
-        # below zero.
+        # Where mpv has read up to, and when it said so: a piece that closes
+        # is placed from this, so a few of them are kept back.
+        self._samples: deque[tuple[float, float]] = deque(
+            maxlen=SAMPLES_KEPT
+        )
+
+        # The time the captions have been written up to, on the same clock.
+        # The first pass has nothing behind it, and the player's timeline
+        # never goes below zero.
         self._said_until = 0.0
         self._heard = 0
         self._skipped = 0
@@ -997,7 +954,7 @@ class LiveCaptions(GrowingCaptions):
 
         # Pieces waiting to be heard, and the piece whose tail belongs in
         # front of the next one.
-        self._queued: deque[Piece] = deque()
+        self._queued: deque[Placed] = deque()
         self._previous: Path | None = None
         self._previous_at = 0.0
         self._previous_duration = 0.0
@@ -1029,9 +986,28 @@ class LiveCaptions(GrowingCaptions):
 
         self._thread.start()
 
+    def sample(
+        self,
+        wall: float,
+        edge: float,
+    ) -> None:
+        """
+        Where mpv has read up to, and when it said so.
+
+        Read from the player while the broadcast plays, and what places a
+        piece: the audio carries no clock of its own, so the reading edge is
+        the only thing that says where mpv is in the stream.
+        """
+
+        with self._lock:
+
+            self._samples.append(
+                (wall, edge)
+            )
+
     def cues(self) -> list[tuple[float, float, str]]:
         """
-        What has been said so far, on the broadcast's timeline.
+        What has been said so far, on the timeline mpv reads.
         """
 
         with self._lock:
@@ -1127,7 +1103,7 @@ class LiveCaptions(GrowingCaptions):
 
     def transcribe(
         self,
-        piece: Piece,
+        placed_piece: Placed,
     ) -> None:
         """
         One closed piece: hear it, place it, and write what it said.
@@ -1143,12 +1119,14 @@ class LiveCaptions(GrowingCaptions):
         sentence the next pass can finish.
         """
 
+        piece = placed_piece.piece
+
         with self._lock:
 
             said_until = self._said_until
 
         audio = piece.path
-        start = piece.at
+        start = placed_piece.at
 
         if self._previous is not None and self._previous.exists():
 
@@ -1197,7 +1175,7 @@ class LiveCaptions(GrowingCaptions):
                 )
 
             self._previous = piece.path
-            self._previous_at = piece.at
+            self._previous_at = placed_piece.at
             self._previous_duration = piece.duration
 
         heard = split_cues(
@@ -1226,7 +1204,8 @@ class LiveCaptions(GrowingCaptions):
             cue
             for cue in heard
             if cue[0] >= said_until
-            and cue[1] <= piece.at + piece.duration - OVERLAP_SECONDS
+            and cue[1]
+            <= placed_piece.at + piece.duration - OVERLAP_SECONDS
         ]
 
         if not said:
@@ -1365,9 +1344,9 @@ class LiveCaptions(GrowingCaptions):
         The loop itself.
 
         Noticing and hearing are separate on purpose: where a caption
-        belongs is read off the piece itself, so a transcriber that is behind
-        costs delay rather than captions in the wrong place, and what is
-        waiting can be dropped when it falls too far behind.
+        belongs is settled when its piece closes, so a transcriber that is
+        behind costs delay rather than captions in the wrong place, and
+        what is waiting can be dropped when it falls too far behind.
         """
 
         cursor = -1
@@ -1382,7 +1361,7 @@ class LiveCaptions(GrowingCaptions):
                 # the queue: a piece taken once is never taken again.
                 cursor = max(piece.sequence for piece in closed)
 
-                self._queued.extend(closed)
+                self._place(closed)
 
             self._note(
                 self._capture.take_notes()
@@ -1410,6 +1389,47 @@ class LiveCaptions(GrowingCaptions):
                 POLL_SECONDS
             )
 
+    def _place(
+        self,
+        closed: list[Piece],
+    ) -> None:
+        """
+        Give newly closed pieces the moment of mpv's timeline they start at.
+
+        The newest of them closed just now and each one before it a piece
+        length earlier - the playlist states a piece only once it is whole,
+        and the poll cannot see it any sooner - so a batch is walked
+        backwards from the reading edge mpv reported, and a piece is carried
+        with the place it was given until it is heard.
+        """
+
+        now = self._clock()
+
+        behind = 0.0
+
+        for piece in reversed(closed):
+
+            at = edge_at(
+                list(self._samples),
+                now - behind - piece.duration,
+            )
+
+            behind += piece.duration
+
+            if at is None:
+
+                # Nothing has said where the broadcast is yet, and a
+                # caption on the wrong second is worse than none.
+                piece.path.unlink(
+                    missing_ok=True
+                )
+
+                continue
+
+            self._queued.appendleft(
+                Placed(piece, at)
+            )
+
     def _drop_what_cannot_be_heard(self) -> None:
         """
         Keep the queue short, and the captions with the broadcast.
@@ -1424,7 +1444,7 @@ class LiveCaptions(GrowingCaptions):
 
         while len(self._queued) > MAX_QUEUED_CHUNKS:
 
-            self._queued.popleft().path.unlink(
+            self._queued.popleft().piece.path.unlink(
                 missing_ok=True
             )
 
