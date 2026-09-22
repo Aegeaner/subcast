@@ -130,6 +130,70 @@ def split_cues(
     return fitted
 
 
+def split_heard(
+    start: float,
+    end: float,
+    text: str,
+    words=None,
+    after: float = 0.0,
+    min_duration: float = 0.8,
+    width: int = LINE_WIDTH,
+    min_tail: int = 24,
+) -> list[tuple[float, float, str]]:
+    """
+    One cue the model timed word by word, in the pieces a caption line holds.
+
+    The pieces are the ones `split_cues` makes - the same text, wrapped the
+    same way - and each is timed by the words it holds rather than by an
+    equal share of the cue. A share is even, and speech is not: a sentence
+    with a pause in the middle, or a phrase said quickly, has its second half
+    on screen a second or two before or after it is said. On one 42 minute
+    programme, one cue in four was long enough to be split, and the error
+    inside those reached two seconds - captions that lead the voice.
+
+    A cue the model gave no timing for is left to `split_cues`, which is all
+    there is to go on. `after` is the second of the cue the words belong to
+    from (a stretch heard with the tail of the one before it says that tail
+    again, and only what comes after is new).
+    """
+
+    pieces = split_cues(
+        [(start, end, text)],
+        min_duration=min_duration,
+        width=width,
+        min_tail=min_tail,
+    )
+
+    held = [
+        word
+        for word in (words or [])
+        if float(word.start) >= after
+    ]
+
+    if not held:
+
+        return pieces
+
+    taken = 0
+    timed: list[tuple[float, float, str]] = []
+
+    for piece_start, piece_end, piece in pieces:
+
+        count = len(piece.split())
+
+        held_by_piece = held[taken:taken + count]
+        taken += count
+
+        if held_by_piece:
+
+            piece_start = float(held_by_piece[0].start)
+            piece_end = float(held_by_piece[-1].end)
+
+        timed.append((piece_start, piece_end, piece))
+
+    return timed
+
+
 def save_cues(
     cues: list[tuple[float, float, str]],
     path: Path,

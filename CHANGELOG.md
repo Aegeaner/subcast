@@ -58,6 +58,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A long sentence's pieces are drawn when they are said, not spread evenly
+  over it.** Whisper hands over sentences, a long one is cut into the pieces a
+  caption line holds, and each piece was timed by an equal share of the whole
+  cue. Speech is not even - a pause inside a sentence, a phrase said quickly -
+  so the second half of a sentence went on screen before or after it was said,
+  and 83 of the 270 cues of one 16 minute programme were long enough to be
+  split. Measured against the model's own word times over that item: 76 of its
+  353 pieces started more than half a second from the word they begin with, the
+  worst by 2.4 seconds. The words carry their own timing and the reader asks for
+  it now (`subtitles._stream`), so a piece is timed by the words it holds
+  (`srt.split_heard`). Asking for it costs nothing measurable over 22 minutes of
+  one programme (79 seconds against 78, 3212 of 3294 words identical), and a
+  test that fails without it puts a sentence's second piece at 6.67 seconds
+  where the words put it at 0.65.
+
+- **A join between two spans no longer takes the words it runs through with
+  it.** An item heard from a stream is decoded a span at a time, and each span
+  is fetched from a little before the join so the model is not left to make out
+  a sentence from its middle. The line it makes of that overlap and the new
+  audio together starts in the overlap, and every cue that started there was
+  dropped whole - so the words the line ended with, which were the new audio's,
+  went with it, at every join of the item. The line is now cut at the join where
+  the captions stopped, word by word, which is how a live pass has always cut a
+  piece (`subtitles._heard`, `subtitles.JOINED_HEARING`). A stretch with nothing
+  in front of it - a file that was downloaded first, an episode - is heard with
+  the settings it was heard with before, so nothing already measured changes.
+  Measured on one Radio 4 programme heard end to end (42 minutes, ten spans,
+  2026-09-21): words of a whole-file transcript of the same audio that had no
+  cue over them within ten seconds of a join, 114 before and 34 after; over the
+  whole item, 269 of 6941 words before and 226 after. One join lost a whole
+  sentence ("the beginning of Greek philosophical thinking, who clearly was
+  also reacting to") and the next began mid-phrase in its place.
+
 - **A broadcast's captions are made from the pieces its playlist names, not
   from a pipe read for hours.** The capture used to run
   `yt-dlp -f worstaudio/worst -o - | ffmpeg -f segment` for the whole

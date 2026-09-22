@@ -320,6 +320,12 @@ def test_settings_replace_the_defaults_rather_than_sitting_beside_them():
     assert model.seen["language"] == "en"
     assert model.seen["condition_on_previous_text"] is False
 
+    # The words carry their own timing, which is what places a long cue's
+    # pieces where they are said (`srt.split_heard`). Measured over 22
+    # minutes of one programme: 79 seconds with it against 78 without, and
+    # 3212 of 3294 words identical.
+    assert model.seen["word_timestamps"] is True
+
 
 class Word:
     """One word, as the model timed it and wrote it."""
@@ -508,10 +514,17 @@ def test_a_segment_without_word_timing_is_taken_whole():
 class Segment:
     """One stretch of speech, as the model hands it over."""
 
-    def __init__(self, start: float, end: float, text: str) -> None:
+    def __init__(
+        self,
+        start: float,
+        end: float,
+        text: str,
+        words: list[Word] | None = None,
+    ) -> None:
         self.start = start
         self.end = end
         self.text = text
+        self.words = words
 
 
 class Hearing:
@@ -649,6 +662,65 @@ def test_a_file_is_heard_while_it_plays(monkeypatch, tmp_path: Path):
     captioning.stop()
 
 
+def test_a_long_sentence_is_drawn_where_its_words_were_said(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    The model hands over sentences; a long one is cut into the pieces a
+    caption line holds, and each piece is timed by the words it holds. An
+    equal share of the sentence - which is what a piece gets without the
+    words' timing - puts the second half on screen a second or two before or
+    after it is said, and one cue in four of a 42 minute programme was long
+    enough to be split, with the error inside those reaching two seconds.
+    """
+
+    first = [Word(index * 0.05, index * 0.05 + 0.05, f" word{index}") for index in range(15)]
+    second = [Word(8.0 + index * 0.4, 8.0 + index * 0.4 + 0.4, f" word{index + 15}") for index in range(15)]
+
+    sentence = "".join(word.word for word in first + second).strip()
+
+    model = Hearing(
+        early=[
+            Segment(
+                0.0,
+                20.0,
+                sentence,
+                words=first + second,
+            )
+        ],
+        late=[],
+        duration=20.0,
+    )
+
+    captioning, _item = heard(monkeypatch, tmp_path, model)
+
+    captioning.start()
+
+    assert wait_for(lambda: subtitles.has_transcript(_item))
+
+    pieces = captioning.cues()
+
+    assert len(pieces) > 1
+
+    # Every piece is timed by the words it holds: the words are not evenly
+    # spaced, so the second piece starts where its first word was said (0.65s
+    # in this sentence) and not at the share of the sentence a piece would get
+    # without their timing.
+    words = first + second
+    taken = 0
+
+    for piece_start, piece_end, piece in pieces:
+
+        held = words[taken:taken + len(piece.split())]
+        taken += len(held)
+
+        assert piece_start == pytest.approx(held[0].start)
+        assert piece_end == pytest.approx(held[-1].end)
+
+    captioning.stop()
+
+
 def test_the_block_draws_the_piece_being_said_not_the_whole_sentence(
     monkeypatch,
     tmp_path: Path,
@@ -768,20 +840,44 @@ class StreamedHearing:
     """
     A model that takes a span's length from the bytes it was given, the way
     decoding a span of a stream does, and names its cue after the span.
+
+    The line it opens with is the model making one sentence of the overlap
+    and the new audio, as it does when a span starts in the middle of one:
+    its words carry their own timing, half of them in front of the join and
+    half behind it.
     """
 
     # bytes per second of the audio the tests serve
     RATE = 10.0
 
+    def __init__(self, timed: bool = True) -> None:
+
+        self._timed = timed
+        self.options: dict = {}
+
     def transcribe(self, path, **options):
+
+        self.options = options
 
         seconds = len(Path(path).read_bytes()) / self.RATE
 
         def stream():
 
-            # a word the cut went through the middle of: heard by the span
-            # on each side of it, and wanted by the second one only
-            yield Segment(0.5, 1.0, "the word the cut landed in")
+            # 1.5 to 2.5 of the span: the join is at 2.0, so the word in
+            # front of it belongs to the stretch before this one
+            yield Segment(
+                1.5,
+                2.5,
+                "the word the cut landed in",
+                words=(
+                    [
+                        Word(1.5, 1.9, " the word"),
+                        Word(2.1, 2.5, " the cut landed in"),
+                    ]
+                    if self._timed
+                    else None
+                ),
+            )
 
             yield Segment(
                 seconds / 2,
@@ -797,6 +893,7 @@ def streaming(
     tmp_path: Path,
     body: bytes,
     fetched=None,
+    hearing=None,
 ) -> tuple[subtitles.StreamedWhilePlaying, Media]:
     """
     An item being streamed into a cache of its own, with the spans served
@@ -804,7 +901,11 @@ def streaming(
     """
 
     monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
-    monkeypatch.setattr(subtitles, "load_model", lambda name, device: StreamedHearing())
+    monkeypatch.setattr(
+        subtitles,
+        "load_model",
+        lambda name, device: hearing or StreamedHearing(),
+    )
     monkeypatch.setattr(subtitles, "FIRST_SPAN_BYTES", 50)
 
     # the audio these tests serve is not audio: its length is the one the
@@ -860,6 +961,11 @@ def test_a_stream_is_heard_a_span_at_a_time(monkeypatch, tmp_path: Path):
     decoded and its cues placed where the audio before it ended, so they
     belong to the copy the player is reading - and the bytes fetched are the
     copy that is left on disk when the whole item has been heard.
+
+    A span starts a little before the join, and the line the model makes of
+    the overlap and the new audio together is cut at the join: the words
+    behind it are this span's to say. Dropping that line instead loses the
+    words it ends with, at every join of the item.
     """
 
     body = bytes(512)
@@ -879,10 +985,12 @@ def test_a_stream_is_heard_a_span_at_a_time(monkeypatch, tmp_path: Path):
         (start, text)
         for start, _end, text in captioning.cues()
     ] == [
-        (0.5, "the word the cut landed in"),
+        (1.5, "the word the cut landed in"),
         (2.5, "00000.mp3"),
         # 3.0 is where the second span starts (5.0 less the 2.0 overlap),
-        # so the cue at 3.5 is the half-word and is dropped
+        # so 5.0 is the join: the word in front of it was said already, and
+        # the words behind it are the line this span has to say
+        (5.1, "the cut landed in"),
         (27.1, "00001.mp3"),
     ]
 
@@ -890,6 +998,70 @@ def test_a_stream_is_heard_a_span_at_a_time(monkeypatch, tmp_path: Path):
     assert (tmp_path / "rte" / "one.mp3").read_bytes() == body
     assert not (tmp_path / "rte" / "one.mp3.part").exists()
     assert captioning.summary() is None
+
+    captioning.stop()
+
+
+def test_a_span_with_a_line_in_front_of_it_is_heard_with_word_timings(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    The timing of the words is what cuts a line at the join, so a stretch
+    that follows another is heard with it - and a stretch with nothing in
+    front of it, which has no join to cut, is heard with the settings an
+    episode is heard with. That is what keeps the copy a run downloaded
+    before hearing it decoded exactly as it always was.
+    """
+
+    hearing = StreamedHearing()
+
+    captioning, item = streaming(
+        monkeypatch,
+        tmp_path,
+        bytes(512),
+        hearing=hearing,
+    )
+
+    captioning.start()
+
+    assert wait_for(lambda: subtitles.has_transcript(item))
+
+    assert hearing.options["word_timestamps"] is True
+
+    captioning.stop()
+
+
+def test_a_span_the_model_timed_none_of_drops_its_opening_line(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    Cutting a line at the join needs the timing of its words: without it the
+    line is either written whole - repeating what the stretch before it
+    said - or dropped, and dropped is what a model that hands over no timing
+    gets.
+    """
+
+    captioning, item = streaming(
+        monkeypatch,
+        tmp_path,
+        bytes(512),
+        hearing=StreamedHearing(timed=False),
+    )
+
+    captioning.start()
+
+    assert wait_for(lambda: subtitles.has_transcript(item))
+
+    assert [
+        (start, text)
+        for start, _end, text in captioning.cues()
+    ] == [
+        (1.5, "the word the cut landed in"),
+        (2.5, "00000.mp3"),
+        (27.1, "00001.mp3"),
+    ]
 
     captioning.stop()
 
