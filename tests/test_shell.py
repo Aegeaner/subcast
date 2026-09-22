@@ -405,3 +405,268 @@ def test_a_typed_line_is_read_and_the_end_of_it_is_not(monkeypatch):
     )
 
     assert shell.typed_line(shell.PROMPT) is None
+
+
+class Readline:
+    """
+    The line editor the prompt reads with, as the prompt uses it: the line
+    readline would be completing on, and what it was told about TAB.
+    """
+
+    def __init__(
+        self,
+        line: str,
+        word_start: int,
+        word_end: int,
+    ) -> None:
+
+        self.buffer = line
+        self.word_start = word_start
+        self.word_end = word_end
+        self.completer = None
+        self.bindings: list[str] = []
+
+    def get_line_buffer(self) -> str:
+
+        return self.buffer
+
+    def get_begidx(self) -> int:
+
+        return self.word_start
+
+    def get_endidx(self) -> int:
+
+        return self.word_end
+
+    def set_completer(self, complete) -> None:
+
+        self.completer = complete
+
+    def parse_and_bind(self, binding: str) -> None:
+
+        self.bindings.append(binding)
+
+
+def keep(
+    monkeypatch,
+    tmp_path: Path,
+    *names: str,
+) -> None:
+    """
+    A feeds file holding `names`, in that order, in a config directory of
+    the test's own.
+    """
+
+    monkeypatch.setattr(config, "CONFIG_DIR", tmp_path)
+
+    for number, name in enumerate(names):
+
+        feeds.add(name, f"https://example.test/{number}")
+
+
+def test_tab_completes_a_feed_from_the_first_letters_of_its_name(
+    monkeypatch,
+    tmp_path: Path,
+):
+    keep(
+        monkeypatch,
+        tmp_path,
+        "bbcnews",
+        "c4",
+    )
+
+    # "/feed bb", the word `bb` running from 6 to 8.
+    assert shell.completions("/feed bb", 6, 8) == ["bbcnews"]
+
+    # "/feed c", the word `c`.
+    assert shell.completions("/feed c", 6, 7) == ["c4"]
+
+
+def test_a_name_is_completed_whatever_case_it_was_typed_in(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    A feed is asked for by name rather than by spelling, so `BB` is the
+    same request as `bb` and the completion puts the name back the way it
+    was kept.
+    """
+
+    keep(
+        monkeypatch,
+        tmp_path,
+        "bbcnews",
+    )
+
+    assert (
+        shell.completions("/feed BB", 6, 8)
+        == ["bbcnews"]
+    )
+
+
+def test_a_name_with_a_space_in_it_is_completed_a_word_at_a_time(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    What is offered replaces the word being completed and only that word, so
+    the part of the name already on the line stays where the user put it:
+    completing `n` into `News` leaves `/feed bbc News`, which is the name
+    that was kept.
+    """
+
+    keep(
+        monkeypatch,
+        tmp_path,
+        "BBC News",
+    )
+
+    # "/feed bbc n", the word `n` running from 10 to 11.
+    assert shell.completions("/feed bbc n", 10, 11) == ["News"]
+
+    # "/feed bb": the name is completed whole from its first word.
+    assert (
+        shell.completions("/feed bb", 6, 8)
+        == ["BBC News"]
+    )
+
+
+def test_tab_with_nothing_typed_offers_every_feed_in_the_order_kept(
+    monkeypatch,
+    tmp_path: Path,
+):
+    keep(
+        monkeypatch,
+        tmp_path,
+        "c4",
+        "bbcnews",
+    )
+
+    # "/feed ", the word after the command being empty.
+    assert shell.completions("/feed ", 6, 6) == [
+        "c4",
+        "bbcnews",
+    ]
+
+
+def test_nothing_but_the_name_after_feed_is_completed(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    The prompt has one thing to offer. An alias typed at `/add` or
+    `/remove`, or the command itself, is readline's to complete from
+    somewhere else - and readline is told there is nothing here rather than
+    given something to put in the line.
+    """
+
+    keep(
+        monkeypatch,
+        tmp_path,
+        "bbcnews",
+    )
+
+    # readline splits on `/`, so the word `/feed` is completing is `feed`.
+    assert shell.completions("/feed", 1, 5) == []
+
+    # Each of these is the line, and the word the cursor would be in.
+    for line, word_start, word_end in (
+        ("/add b", 5, 6),
+        ("/remove b", 8, 9),
+        ("/help b", 6, 7),
+        ("/list", 1, 5),
+        ("bbcnews", 0, 7),
+    ):
+
+        assert shell.completions(line, word_start, word_end) == []
+
+
+def test_a_feed_kept_or_forgotten_is_completed_at_once(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    Nothing is held from the last TAB: the names are the feeds file read
+    when TAB is pressed, so `/add` and `/remove` in this session are in the
+    next completion without an index to keep in step.
+    """
+
+    keep(
+        monkeypatch,
+        tmp_path,
+        "bbcnews",
+    )
+
+    assert (
+        shell.completions("/feed bb", 6, 8)
+        == ["bbcnews"]
+    )
+
+    feeds.add("c4", "https://example.test/c4")
+
+    assert shell.completions("/feed ", 6, 6) == [
+        "bbcnews",
+        "c4",
+    ]
+
+    feeds.remove("bbcnews")
+
+    assert shell.completions("/feed ", 6, 6) == ["c4"]
+    assert shell.completions("/feed bb", 6, 8) == []
+
+
+def test_the_completer_answers_one_candidate_at_a_time(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    readline asks the same question again until it is told there is no more,
+    and what it asks about is the line on screen.
+    """
+
+    keep(
+        monkeypatch,
+        tmp_path,
+        "bbcnews",
+        "c4",
+    )
+
+    editor = Readline("/feed ", 6, 6)
+
+    monkeypatch.setattr(shell, "readline", editor)
+
+    complete = shell.feed_completer()
+
+    assert complete("", 0) == "bbcnews"
+    assert complete("", 1) == "c4"
+    assert complete("", 2) is None
+
+
+def test_the_prompt_binds_tab_to_the_completion(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """
+    A completion nobody can reach is the feature missing: the prompt hands
+    the line editor a completer and tells it that TAB is what calls it.
+    """
+
+    keep(
+        monkeypatch,
+        tmp_path,
+        "bbcnews",
+    )
+
+    editor = Readline("/feed b", 6, 7)
+
+    monkeypatch.setattr(shell, "readline", editor)
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda prompt: "/feed b",
+    )
+
+    assert shell.typed_line(shell.PROMPT) == "/feed b"
+
+    assert editor.bindings == ["tab: complete"]
+    assert editor.completer("b", 0) == "bbcnews"
+    assert editor.completer("b", 1) is None

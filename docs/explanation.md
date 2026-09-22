@@ -382,6 +382,14 @@ so the listings, the picker, the captions and the player are the ones that were
 already there, and a command cannot drift away from them
 (`shell.feed_arguments`).
 
+TAB completes the name `/feed` is given, and what it completes from is the
+feeds file, read when TAB is pressed rather than kept beside it. A list held in
+memory would be a second copy of something the user changes from inside the
+session, since `/add` and `/remove` write that file, so every command that
+changed it would have to keep the copy in step - and a completion that is out of
+step offers a name that no longer means a feed. Reading a small file again is
+cheaper than that bookkeeping and cannot be stale (`shell.completions`).
+
 What the shell adds is a lifetime. A command line is one run and one ending, so
 a failure there is the process's; a shell is a session, so the same failure is
 one command that did not work - a URL nothing reads, a feed that does not

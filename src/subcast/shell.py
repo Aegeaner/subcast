@@ -9,11 +9,14 @@ listings, the picker, the feeds file, the captions and the player are the
 ones that were already there.
 
 Commands are read from standard input, so a pipe drives the shell too and
-it stops at the end of its input. Ctrl-C is the one thing a shell has to
-get right: it stops the command that is running - playback included, whose
-mpv is terminated and whose caption block is cleared on the way out - and
-the next command is read. A run told to end by a signal is not caught
-here: that is the shell being told to go away.
+it stops at the end of its input. TAB completes the name `/feed` is given,
+and what it completes from is the feeds file read at that moment, so a feed
+kept or forgotten in the same session completes without anything being kept
+in step. Ctrl-C is the one thing a shell has to get right: it stops the
+command that is running - playback included, whose mpv is terminated and
+whose caption block is cleared on the way out - and the next command is
+read. A run told to end by a signal is not caught here: that is the shell
+being told to go away.
 """
 
 from __future__ import annotations
@@ -26,6 +29,17 @@ from collections.abc import Callable
 from typing import NamedTuple
 
 from . import feeds
+
+# What `input` reads a line with when a line editor is there to read it.
+# TAB completion is the editor's, so a platform that has none is a prompt
+# that reads commands and completes nothing.
+try:
+
+    import readline
+
+except ImportError:  # pragma: no cover - no line editor to complete with
+
+    readline = None
 
 PROMPT = "subcast> "
 
@@ -118,6 +132,84 @@ def add_arguments(
     ]
 
 
+def completions(
+    line: str,
+    word_start: int,
+    word_end: int,
+) -> list[str]:
+    """
+    What TAB offers where `/feed` is being given a name, as the text that
+    replaces the word being completed.
+
+    The word is completed into the whole of the name it is the beginning of:
+    `/feed mor` offered `morning` replaces `mor`, and a name with a space in
+    it is completed a word at a time - `/feed bbc n` offered `News` leaves
+    the line reading `/feed bbc News`, which is how that name is spelled.
+    Nothing else is completed, so TAB after `/add` offers nothing.
+
+    The names are the feeds file, read now rather than kept in a list beside
+    it: `/add` and `/remove` are then in the next TAB's answers with nothing
+    to invalidate, and reading a file of a few lines is the whole of the
+    cost. The feeds are offered in the order they were kept, which is the
+    order `--feeds` numbers them in.
+    """
+
+    command, space, head = line[:word_start].lstrip().partition(" ")
+
+    if command != "/feed" or not space:
+
+        return []
+
+    typed = (head + line[word_start:word_end]).lower()
+
+    return [
+        feed.name[len(head):]
+        for feed in feeds.load()
+        if feed.name.lower().startswith(typed)
+    ]
+
+
+def feed_completer() -> Callable[[str, int], str | None]:
+    """
+    The completer `readline` is given: what it calls, once per candidate, on
+    the line the user is looking at.
+
+    What readline offers along with the call is the word it split the line
+    into, which is not necessarily where the name begins - `/feed bbc n` is
+    completing from `bbc` - so the line and the word's place in it are read
+    and the word itself is not.
+
+    The candidates are worked out on the first call and handed over one at a
+    time after that - readline asks the same question again until it is told
+    there is no more - and they are worked out then rather than held from
+    the last time TAB was pressed, so a feed kept in this session is
+    completed by the next one.
+    """
+
+    offered: list[str] = []
+
+    def complete(
+        text: str,
+        state: int,
+    ) -> str | None:
+
+        if not state:
+
+            offered.clear()
+
+            offered.extend(
+                completions(
+                    readline.get_line_buffer(),
+                    readline.get_begidx(),
+                    readline.get_endidx(),
+                )
+            )
+
+        return offered[state] if state < len(offered) else None
+
+    return complete
+
+
 def typed_line(
     prompt: str,
 ) -> str | None:
@@ -125,8 +217,22 @@ def typed_line(
     A line typed at the prompt, or None when the input has ended.
 
     Ctrl-C is not caught here: what it means depends on whether anything is
-    running, which the shell knows and this does not.
+    running, which the shell knows and this does not. TAB finishes a feed's
+    name, which is the one thing the prompt has to offer: a feed is asked
+    for by the name it was kept under.
     """
+
+    if readline is not None:
+
+        readline.set_completer(feed_completer())
+
+        # GNU readline and libedit are told about TAB differently, and an
+        # editor that was not told leaves TAB doing nothing at all.
+        readline.parse_and_bind(
+            "bind ^I rl_complete"
+            if "libedit" in (readline.__doc__ or "")
+            else "tab: complete"
+        )
 
     try:
 
@@ -248,7 +354,10 @@ COMMANDS: dict[str, Command] = {
 }
 
 # What the prompt says when it opens, and again when /help is typed.
-HEADING = "subcast: the feeds you kept, played by name."
+HEADING = (
+    "subcast: the feeds you kept, played by name. "
+    "TAB after /feed completes a feed's name."
+)
 
 # Where the help puts the description, and how far the terminal may be used.
 # These are the columns `subcast --help` puts its options in: a list of

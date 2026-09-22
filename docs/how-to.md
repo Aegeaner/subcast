@@ -38,6 +38,15 @@ subcast> /feed c4
 `/list` prints the feeds you saved, as `subcast --feeds` does. `/feed` opens a
 feed and asks what to play from it, with captions on. `/quit` stops.
 
+Press TAB after `/feed` to complete the name of a saved feed:
+
+```
+subcast> /feed mor
+```
+
+`mor` and TAB leave `/feed morning` on the line. A name of several words is
+completed a word at a time, and pressing TAB twice lists the names that match.
+
 Give `/feed` the name or the number of a saved feed, or nothing at all for
 `morning`, which is the newest RTÉ Morning Ireland:
 

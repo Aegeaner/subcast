@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **TAB completes a feed's name in the shell.** `/feed bb` finishes into
+  `/feed bbcnews`, a name of several words is completed a word at a time, and
+  pressing TAB twice lists the names that match. The names are the feeds file
+  read when TAB is pressed (`shell.completions`), so a feed kept with `/add` or
+  forgotten with `/remove` in the same session is completed by the next TAB with
+  no index to keep in step. Nothing else on the line is completed, and the line
+  editor is the one `input` already reads with: a platform without one reads
+  commands and completes nothing.
+
 - **Acast shows, and The Irish Times podcasts.** A show published on Acast is
   read as the feed it is published as, from either end. `shows.acast.com/<show>`
   is Acast's own page for a show, and it links that feed; the slug in its path is

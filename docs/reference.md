@@ -35,7 +35,11 @@ A command is the arguments it means, so everything in this reference applies:
 `/feed c4` is `subcast --feed c4 --pick --subs`. The name a feed is asked for by
 is a name rather than a URL - `/feed` given a URL looks it up as a name and
 finds none - and `/add` is the one command a URL is given to, where it is kept
-rather than played. What a command does not do is
+rather than played. TAB completes that name: `/feed mor` finishes into
+`/feed morning`, a name of several words is completed one word at a time, and
+the names completed from are the feeds file as it stands when TAB is pressed, so
+a feed `/add`ed or `/remove`d in the session is completed the next time. Nothing
+else on the line is completed. What a command does not do is
 end the shell: a URL that does not work, a feed that does not answer and an
 interrupted playback all report themselves and the prompt returns. A command
 that fails prints its `Error:` line and the shell reads the next command.

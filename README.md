@@ -84,7 +84,7 @@ plays.
 commands instead of playing anything:
 
 ```
-subcast: the feeds you kept, played by name.
+subcast: the feeds you kept, played by name. TAB after /feed completes a feed's name.
 
   /list                 Print the feeds you saved, and where each is read from.
   /feed [<name>]        Open a feed and choose what to play from it.
@@ -101,6 +101,11 @@ Morning Ireland; `/feed bbcnews` opens a feed you saved, and `/feed 3` opens the
 third one. Each lists its entries and asks what to play, with captions on.
 `/help feed` prints one command in full, including the command line it is the
 same as.
+
+Press TAB after `/feed` to complete the name of a feed you saved: `/feed bb`
+finishes the name, and a name of several words is completed a word at a time.
+A feed kept with `/add`, or forgotten with `/remove`, is completed from the
+next TAB.
 
 **Play an episode that has no captions.** A flag with no URL opens the feed
 called `morning`, which is the newest RTÉ Morning Ireland, and `--subs`
