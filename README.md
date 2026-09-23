@@ -20,6 +20,9 @@ Sources:
 - **Acast shows** — Acast's page for a show, or a publisher's page whose
   episodes it publishes, such as an Irish Times podcast. Subcast reads the feed
   the show is published as.
+- **Apple Podcasts** — a show, or one episode of it. Subcast reads the feed the
+  page says the show is published as, which is the URL a podcast client is
+  served.
 - **Podcast feeds** — any RSS feed whose items enclose audio, played from that
   audio.
 - **RTÉ Radio 1** — any programme page. Subcast reads the segment list RTÉ
@@ -152,12 +155,14 @@ subcast https://www.rte.ie/radio/radio1/this-week/
 programme under its own name.
 
 **Play a podcast.** Pass a feed, a Bloomberg series page, a BBC Audio page, an
-Acast show page, or a publisher's podcast page:
+Acast show page, a publisher's podcast page, or an Apple Podcasts show or
+episode:
 
 ```bash
 subcast https://www.bloomberg.com/podcasts/series/bloomberg-news-now
 subcast https://www.bbc.com/audio/brand/p002vsmz --subs
 subcast https://www.irishtimes.com/podcasts/in-the-news/
+subcast https://podcasts.apple.com/us/podcast/huberman-lab/id1545953110
 ```
 
 A feed states the audio and its length, so a podcast plays from the file its
@@ -207,6 +212,6 @@ Subcast prints the path it wrote, under `~/Videos/<source>/`.
 Captions are generated on your machine. Nothing is uploaded and no analytics
 are collected.
 
-Subcast is not affiliated with RTÉ, YouTube, the BBC, Bloomberg, Acast or The
-Irish Times, and is not endorsed by any of them. Licence:
+Subcast is not affiliated with RTÉ, YouTube, the BBC, Bloomberg, Acast, Apple or
+The Irish Times, and is not endorsed by any of them. Licence:
 [MIT](https://github.com/Aegeaner/subcast/blob/main/LICENSE).

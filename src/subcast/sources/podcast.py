@@ -326,18 +326,34 @@ class FeedSource:
             self.feed_url(url)
         )
 
+    def reading(
+        self,
+        text: str,
+    ) -> tuple[str, list[Media]]:
+        """
+        What a feed calls itself, and the items it publishes in its order.
+
+        One reading serves every source whose listing is a feed, including
+        the ones that have to find the feed first: what a feed means is
+        the same document whoever named it.
+        """
+
+        return parse_feed(
+            text,
+            self.name,
+        )
+
     def episodes(
         self,
         url: str,
         limit: int | None = None,
     ) -> list[Media]:
 
-        _title, items = parse_feed(
+        _title, items = self.reading(
             self.feed_text(
                 url,
                 limit,
-            ),
-            self.name,
+            )
         )
 
         return items[:limit] if limit else items
@@ -360,12 +376,11 @@ class FeedSource:
         What the feed calls itself, for a feed saved under its name.
         """
 
-        title, _items = parse_feed(
+        title, _items = self.reading(
             self.feed_text(
                 url,
                 None,
-            ),
-            self.name,
+            )
         )
 
         if not title:

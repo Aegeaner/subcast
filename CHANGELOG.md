@@ -8,6 +8,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Apple Podcasts shows, and the episodes of them.** A link to
+  `podcasts.apple.com` is read as the feed the show is published as, which is the
+  URL a podcast client is served, so a show plays from the audio its publisher
+  publishes and `--pick`, `--save`, `--subs` and resume work on it as they do on
+  any feed. A link to one episode plays that episode rather than the newest one:
+  the page states the guid the feed gives it, and the item is found by that guid
+  rather than by matching a title against the feed (measured on one show,
+  2026-09-23: the guid the page names is the guid the feed carries, and the title
+  and length it states are the feed's). Both forms of a link are read - the
+  storefront and the slug in the path are optional, and
+  `itunes.apple.com/us/podcast/id<n>` is still served - and a link to a channel
+  is refused by what it is, because a channel is a group of shows rather than one
+  of them.
+
 - **TAB completes a feed's name in the shell.** `/feed bb` finishes into
   `/feed bbcnews`, a name of several words is completed a word at a time, and
   pressing TAB twice lists the names that match. The names are the feeds file

@@ -116,7 +116,7 @@ Every option works the same way on any programme: `--subs`, `--save`,
 
 Subcast reads the pages and feeds that list audio: any BBC Audio page or
 schedule, a Bloomberg podcast series, an Acast show page, a publisher's podcast
-page, and any podcast feed.
+page, an Apple Podcasts show or episode, and any podcast feed.
 
 ```bash
 subcast https://www.bbc.com/audio/brand/p002vsmz
@@ -124,15 +124,17 @@ subcast https://www.bbc.com/audio/category/news --pick
 subcast https://www.bbc.com/audio/schedules/bbc_radio_fourfm --pick
 subcast https://www.bloomberg.com/podcasts/series/bloomberg-news-now
 subcast https://www.irishtimes.com/podcasts/in-the-news/
+subcast https://podcasts.apple.com/us/podcast/huberman-lab/id1545953110
 subcast https://podcasts.files.bbci.co.uk/p02nq0gn.rss
 ```
 
 A BBC programme page lists its episodes and a category page lists the programmes
 it covers, so `--pick` chooses from either; choosing a programme plays its newest
-episode. A schedule lists the programmes a station puts out over a day. A feed
-states the audio its items enclose, so a podcast plays from the file its
-publisher serves, whether you passed the feed or a page that named it. Save one
-to come back to by name:
+episode. A schedule lists the programmes a station puts out over a day. An Apple
+Podcasts show plays the feed its publisher syndicates, and a link to one of its
+episodes plays that episode. A feed states the audio its items enclose, so a
+podcast plays from the file its publisher serves, whether you passed the feed or
+a page that named it. Save one to come back to by name:
 
 ```bash
 subcast https://www.bbc.com/audio/brand/p02nq0gn --add-feed
@@ -211,9 +213,10 @@ subcast --feed c4
 ```
 
 Any listing saves this way: a channel, a playlist, an RTÉ programme, a BBC Audio
-programme, category or schedule, a Bloomberg series, an Acast show page, or a
-podcast feed's URL. The name is the alias you ask for it by. Without `--name`,
-the listing is named after itself, so the RTÉ page above gives `This Week`.
+programme, category or schedule, a Bloomberg series, an Acast show page, an
+Apple Podcasts show, or a podcast feed's URL. The name is the alias you ask for
+it by. Without `--name`, the listing is named after itself, so the RTÉ page
+above gives `This Week`.
 
 List what you have saved, open one, or forget one:
 

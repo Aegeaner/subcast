@@ -98,7 +98,8 @@ shell.
 | Feeds | `$XDG_CONFIG_HOME/subcast/feeds.json` |
 
 The cache is keyed by the item's own id: an episode UUID for RTÉ, a video id for
-YouTube, an episode id for BBC, and a clip id for a podcast or an Acast show.
+YouTube, an episode id for BBC, and a clip id for a podcast, an Acast show or an
+Apple Podcasts show.
 
 ## Cache lifetimes
 
@@ -116,6 +117,7 @@ YouTube, an episode id for BBC, and a clip id for a podcast or an Acast show.
 | Source | Behaviour |
 | --- | --- |
 | `acast` | A show published on Acast: Acast's own page for it (`shows.acast.com/<show>`), or a publisher's page whose episodes Acast serves, such as an Irish Times podcast. Acast's page links the feed the show is published as; a publisher's page names the show in the stream its own cards play from, and a page carrying more than one show is refused with the feeds it holds. Everything after that is a podcast feed. |
+| `apple` | An Apple Podcasts show, or one episode of it. Subcast reads the feed the page says the show is published as, which is the URL a podcast client is served, so a show plays from the audio its publisher publishes. A link to one episode plays that episode rather than the newest one: the page names it by the guid the feed gives it, and a guid the feed does not carry is refused. A channel is refused, because a channel is a group of shows rather than one of them. Everything after the feed is a podcast feed. |
 | `bbc` | A BBC Audio page: a programme, a series, a category, a station's schedule, or one episode. Subcast reads the payload the page is rendered from, so a listing costs one request; the version the audio is addressed by comes from the programme's own JSON when an item is played, and that is the version BBC publishes for download. A category lists programmes, an item that is a programme plays its newest episode, and a schedule lists the programmes a station puts out over a day. A programme page carries ten episodes at a time, and a deeper listing asks for the pages it needs. |
 | `bloomberg` | A Bloomberg podcast series. Bloomberg's own pages refuse anything that is not a browser, so the show is read where it is hosted: its show page names the programme and links the feed it is syndicated as. Everything after that is a podcast feed. |
 | `podcast` | Any RSS feed whose items enclose audio. The enclosure is the audio and `itunes:duration` its length, and a resolve has nothing left to find. A transcript a feed publishes is not read: it is timed against the file the publisher made, which is not always the file that arrives (`--subs` hears the audio that plays). |

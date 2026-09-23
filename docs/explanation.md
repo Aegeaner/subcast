@@ -36,8 +36,8 @@ who resolves the stream URL.
 
 A **source** is a pipeline for one site: how a URL's items are listed, and how
 one of them becomes something playable. `youtube`, `rte`, `bbc`, `bloomberg`,
-`acast` and `podcast` are the sources. The URL decides which one a run uses -
-hosts and path shapes do not overlap - so the choice is never the user's.
+`acast`, `apple` and `podcast` are the sources. The URL decides which one a run
+uses - hosts and path shapes do not overlap - so the choice is never the user's.
 
 A **listing** is a URL that points at items: a channel, a playlist, a programme,
 a series, a category, or a podcast feed. One source lists many of them, and the
@@ -76,10 +76,14 @@ Sources differ in one way, and most other differences follow from it.
   series pages refuse anything that is not a browser, so the show is read as the
   feed its host publishes. Acast reaches it from either end: its own page for a
   show links that show's feed, and a publisher's page names the show in the audio
-  its cards carry. BBC Audio reads a listing from the page's own payload and the
-  audio from the version the programme's JSON names, which is the syndication
-  every podcast client is served - and of the versions a programme lists, that is
-  the one published for download.
+  its cards carry. Apple Podcasts reaches it from the payload a page is rendered
+  from, which states the feed the show is published as - the URL a podcast client
+  is served - and, on an episode's page, the guid the feed gives that episode, so
+  a link to one episode is that item of the feed rather than the newest one. BBC
+  Audio reads a listing from the page's own payload and the audio from the version
+  the programme's JSON names, which is the syndication every podcast client is
+  served - and of the versions a programme lists, that is the one published for
+  download.
 
 Captions are made while the item plays, and what is written as they are heard
 is the subtitle file mpv reads again each time it grows. The model hears far
