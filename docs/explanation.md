@@ -118,6 +118,16 @@ ahead of the audio its enclosure served - which is why captions come from
 hearing the audio this run fetched, and why a transcript a feed publishes is not
 used.
 
+Those copies are the tool's own, and a run drops the ones nothing has used for a
+while. It sweeps the cache before it reads any of it, and drops an item whole:
+the audio, the transcript heard from it, the subtitles and the position
+together. For the same reason as above, half of an item is worse than none of
+it - a transcript without the audio it was timed against is a later run's
+captions out of pace with the picture - and the whole of an item is what a cache
+can afford to lose, since a run that needs it again can fetch it again. Because
+the sweep is the first thing a run does with the cache, what it drops is what
+that run had not looked at yet.
+
 ## Playback start and the chapter caveat
 
 mpv has no runtime command for chapters, so they must be present when it starts.

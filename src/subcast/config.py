@@ -16,6 +16,12 @@ CACHE_DIR = Path(
     or "~/.cache"
 ).expanduser() / "subcast"
 
+# How long a run keeps what it cached. The audio, the transcript heard from
+# it and the files written beside it are the tool's own copy of an item, so
+# the next run drops the whole of it once it has gone untouched for longer
+# than this (`retention.sweep`).
+RETENTION_DAYS = 7
+
 # What the user chose rather than what the tool remembers: the feeds list.
 CONFIG_DIR = Path(
     os.environ.get("XDG_CONFIG_HOME")

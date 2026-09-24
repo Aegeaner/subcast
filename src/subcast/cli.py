@@ -9,7 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
-from . import captionbar, config, feeds, listing, meta, picker, shell
+from . import captionbar, config, feeds, listing, meta, picker, retention, shell
 from .background import Background
 from .config import DEFAULT_WHISPER_MODEL, cache_dir, save_dir
 from .live import Capture, LiveCaptions
@@ -1535,6 +1535,18 @@ def run_once(
         if args.add_feed:
 
             return remember_feed(args)
+
+        # Before this run reads anything out of the cache, so what it drops
+        # is what this run had not looked at yet.
+        dropped = retention.sweep()
+
+        if dropped:
+
+            print(
+                f"    Dropped {dropped} cached item(s) untouched for "
+                f"more than {config.RETENTION_DAYS} days.",
+                flush=True,
+            )
 
         target = resolve_target(args)
 

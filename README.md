@@ -142,7 +142,9 @@ model hears the audio as it streams, a span at a time, and mpv reads the caption
 file again each time it grows. Nothing waits for a download or for the whole
 transcription. An item its site will not serve in spans is downloaded first,
 because those captions have to belong to the copy that plays. The transcript is
-cached once the whole item has been heard, so later runs reuse it.
+cached once the whole item has been heard, so later runs reuse it, and an item's
+cache is dropped once nothing has used it for a week, so the cache does not grow
+without end.
 
 **Play another RTÉ Radio 1 programme.** A programme page is a listing, so you
 can pass it the way you pass a channel URL:

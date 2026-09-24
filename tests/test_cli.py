@@ -98,6 +98,22 @@ def in_config_dir(
     )
 
 
+def in_cache(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """
+    A run sweeps the cache before it reads any of it: a test that runs one
+    must not sweep the developer's own cache.
+    """
+
+    monkeypatch.setattr(
+        config,
+        "CACHE_DIR",
+        tmp_path / "cache",
+    )
+
+
 def test_published_captions_are_used_without_being_asked_for():
     """
     A site that already times its own captions should not need a flag:
@@ -642,6 +658,7 @@ def test_a_listing_is_played_item_after_item(monkeypatch, tmp_path: Path):
     import argparse as argparse_module
 
     in_config_dir(monkeypatch, tmp_path)
+    in_cache(monkeypatch, tmp_path)
 
     first = replace(media(), key="one", title="The first")
     second = replace(media(), key="two", title="The second")
@@ -890,6 +907,7 @@ def test_an_item_must_be_resolved_and_heard_from_the_same_audio(
     import argparse as argparse_module
 
     in_config_dir(monkeypatch, tmp_path)
+    in_cache(monkeypatch, tmp_path)
 
     order: list[str] = []
     release = threading.Event()
@@ -1450,6 +1468,7 @@ def test_a_broadcast_is_neither_saved_nor_prepared_without_playback(
     import argparse as argparse_module
 
     in_config_dir(monkeypatch, tmp_path)
+    in_cache(monkeypatch, tmp_path)
 
     live_item = replace(media(), live=True)
 

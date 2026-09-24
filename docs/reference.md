@@ -110,7 +110,17 @@ Apple Podcasts show.
 | Signed stream URLs | reused until 10 minutes before they expire |
 | `<id>.srt`, `<id>.segments.json`, `<id>.chapters.txt` | rendered from the transcript on every run |
 | `<id>.live.srt` | written while a broadcast airs, and left behind afterwards |
-| Everything else | kept until you delete it; subcast deletes nothing on its own |
+| An item's cached files | dropped together by the next run once the newest of them is more than 7 days old |
+
+A run sweeps the cache before it reads any of it, and drops an item whole: its
+audio, the transcript heard from that audio, the subtitles, the segments, the
+position and anything a killed download left behind. A transcript is in pace
+with the audio it was heard from, so a run left holding one of them would have
+captions nobody can vouch for.
+
+An item's age is the age of its newest file. Resuming an episode, or rendering
+its subtitles again, keeps the whole of it. A menu is not an item: `listings/`
+is not swept, because a picker refreshes it from the source anyway.
 
 ## Sources
 

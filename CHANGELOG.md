@@ -8,6 +8,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The cache cleans itself up.** A run drops what it cached for an item that has
+  gone untouched for over a week: its audio, the transcript heard from that
+  audio, the subtitles, the segments, the position and any `.part` a killed
+  download left behind - an item whole or not at all, because a transcript is
+  only in pace with the audio it was heard from, so a cache left holding one
+  without the other is captions a later run cannot vouch for. An item's age is
+  the age of its newest file, so resuming an episode or rendering its subtitles
+  again keeps the whole of it, and `listings/` is not an item at all: a picker
+  re-fetches a menu behind the list. The sweep is the first thing a run does with
+  the cache, so what it drops is what that run had not looked at yet, and it is
+  one pass over one directory per source that never reads a file's bytes - which
+  is why it is a step of the run rather than a thread or a scheduled job:
+  `XDG_CACHE_HOME` is not in cron's environment, so a sweeper outside the tool
+  would have to find the cache, and to know which files belong to an item, for
+  itself. A run that drops something says so.
+  (`retention.sweep`, `cli.run_once`; the lifetime is `config.RETENTION_DAYS`,
+  seven days, and making it a setting is the next step.)
+
 - **Apple Podcasts shows, and the episodes of them.** A link to
   `podcasts.apple.com` is read as the feed the show is published as, which is the
   URL a podcast client is served, so a show plays from the audio its publisher
