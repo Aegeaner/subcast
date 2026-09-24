@@ -201,6 +201,11 @@ def erase(
     Take back the lines the menu occupies, so redrawing it does not push
     everything above out of the window.
 
+    The cursor is brought to the start of the first of them before the
+    screen is cleared from there: a walk up keeps the column it was in, and
+    a clear that starts mid-line leaves the head of that line with the
+    redrawn menu written after it.
+
     Only where the terminal can be asked to: redirected output keeps its
     plain, append-only shape.
     """
@@ -210,27 +215,77 @@ def erase(
         return
 
     sys.stdout.write(
-        f"\x1b[{lines}A\x1b[J"
+        f"\x1b[{lines}A\r\x1b[J"
     )
 
     sys.stdout.flush()
 
 
-def show(
-    items: list[Media],
-    tell: Callable[[str], None],
-) -> int:
+class Screen:
     """
-    Print the menu, and say how many lines it took.
+    The rows the menu has put on the screen, so it can take back exactly
+    those and redraw.
+
+    Every row the menu writes, and every answer the terminal echoed back,
+    moves the cursor down one; erasing fewer rows than that leaves the head
+    of the old menu above the redrawn one, and the numbering the user reads
+    then names entries the menu no longer holds. Counted per row and not
+    per entry, because the refresh's own line, a complaint and the echo of
+    an answer all sit between the entries and the prompt.
+
+    A line the terminal wraps is counted as the one row the menu asked for,
+    so an entry wider than the window still leaves a redraw short: what is
+    counted is the rows the menu wrote, not the rows the terminal used.
     """
 
-    for index, media in enumerate(items, start=1):
+    def __init__(
+        self,
+        tell: Callable[[str], None],
+    ) -> None:
 
-        tell(
-            listing_line(index, media)
-        )
+        self._tell = tell
+        self._rows = 0
 
-    return len(items)
+    def line(
+        self,
+        text: str,
+    ) -> None:
+        """
+        One row of the menu, and the cursor a row further down.
+        """
+
+        self._tell(text)
+        self._rows += 1
+
+    def listing(
+        self,
+        items: list[Media],
+    ) -> None:
+        """
+        The entries, numbered from one.
+        """
+
+        for index, media in enumerate(items, start=1):
+
+            self.line(
+                listing_line(index, media)
+            )
+
+    def echoed(self) -> None:
+        """
+        An answer was read, which the terminal echoed onto the next row.
+        """
+
+        self._rows += 1
+
+    def take_back(self) -> None:
+        """
+        Erase what has been written since this was last called.
+        """
+
+        erase(self._rows)
+
+        self._rows = 0
 
 
 def choose(
@@ -244,9 +299,10 @@ def choose(
 
     `again` fetches the listing afresh: one is started as the menu opens,
     and the menu is redrawn with what it found, so a cached list is never
-    what the user is left looking at. Pressing `r` starts another. The
-    numbering always means what is on screen, so an answer can never land
-    on entries that were not there when it was typed.
+    what the user is left looking at. Pressing `r` starts another, and
+    redraws the menu under the message. The numbering always means what is
+    on screen, so an answer can never land on entries that were not there
+    when it was typed.
 
     An empty answer, Ctrl-D or a listing with nothing in it plays nothing,
     so browsing a long channel costs no more than the listing itself.
@@ -257,9 +313,10 @@ def choose(
         return []
 
     displayed = items
-    current = start_refresh(again, tell, quiet=True)
+    screen = Screen(tell)
+    current = start_refresh(again, screen.line, quiet=True)
 
-    shown = show(displayed, tell)
+    screen.listing(displayed)
 
     while True:
 
@@ -267,16 +324,16 @@ def choose(
 
         while answer is None:
 
-            current, found = collect(current, tell)
+            current, found, note = collect(current)
 
-            if found is not None:
+            if note is not None:
+
+                screen.take_back()
+                screen.line(note)
 
                 displayed = found or displayed
 
-                # the menu, and the question sitting under it
-                erase(shown + 1)
-
-                shown = show(displayed, tell)
+                screen.listing(displayed)
 
                 break
 
@@ -286,9 +343,15 @@ def choose(
 
             continue
 
+        screen.echoed()
+
         if answer.strip().lower() == REFRESH:
 
-            current = start_refresh(again, tell)
+            screen.take_back()
+
+            current = start_refresh(again, screen.line)
+
+            screen.listing(displayed)
 
             continue
 
@@ -304,42 +367,36 @@ def choose(
                 for index in picked
             ]
 
-        tell(COMPLAINT)
+        screen.line(COMPLAINT)
 
 
 def collect(
     current: Background[list[Media]] | None,
-    tell: Callable[[str], None],
-) -> tuple[Background[list[Media]] | None, list[Media] | None]:
+) -> tuple[Background[list[Media]] | None, list[Media] | None, str | None]:
     """
-    What a running refresh has to say: the entries it found, anything the
-    menu should show for them, and nothing left to wait for.
+    What a running refresh has to say: the entries it found, and the line
+    the menu says about them.
 
-    Either half being None means keep waiting; a failure is said once and
-    then dropped, so the menu goes on with what it has and `r` is still
-    there to try again.
+    The first two being None means keep waiting, and the last is a line to
+    write above the redrawn menu rather than under it, where the redraw
+    would have to count it. A failure is a line like any other, so the menu
+    goes on with what it has and `r` is still there to try again.
     """
 
     if current is None:
 
-        return None, None
+        return None, None, None
 
     failure = current.failure_message()
 
     if failure is not None:
 
-        tell(failure)
-
-        return None, None
+        return None, None, failure
 
     if not current.done_yet():
 
-        return current, None
+        return current, None, None
 
     found = current.value() or []
 
-    tell(
-        f"    Refreshed: {len(found)} item(s)"
-    )
-
-    return None, found
+    return None, found, f"    Refreshed: {len(found)} item(s)"

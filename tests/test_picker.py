@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import sys
 import threading
 from collections.abc import Callable
 
@@ -181,30 +183,237 @@ def failing_refresh(
     return again
 
 
-def test_a_refreshed_listing_replaces_the_one_that_was_shown():
+UP = re.compile(r"\x1b\[(\d+)A")
+CLEAR = "\x1b[J"
+
+
+class Terminal:
+    """
+    A terminal that keeps what is left on it.
+
+    The menu redraws itself by walking the cursor up and clearing from
+    there, so the rows, the cursor and those two sequences are what has to
+    be modelled to say what a user is left looking at.
+    """
+
+    def __init__(self) -> None:
+
+        self.rows: list[list[str]] = [[]]
+        self.row = 0
+        self.column = 0
+
+    def isatty(self) -> bool:
+
+        return True
+
+    def flush(self) -> None:
+
+        pass
+
+    def write(self, text: str) -> None:
+
+        while text:
+
+            up = UP.match(text)
+
+            if up is not None:
+
+                self.row = max(0, self.row - int(up.group(1)))
+                text = text[up.end():]
+
+                continue
+
+            if text.startswith(CLEAR):
+
+                del self.rows[self.row][self.column:]
+                del self.rows[self.row + 1:]
+                text = text[len(CLEAR):]
+
+                continue
+
+            self._character(text[0])
+            text = text[1:]
+
+    def _character(self, character: str) -> None:
+
+        if character == "\r":
+
+            self.column = 0
+
+            return
+
+        if character == "\n":
+
+            self.row += 1
+            self.column = 0
+
+            if self.row == len(self.rows):
+
+                self.rows.append([])
+
+            return
+
+        line = self.rows[self.row]
+
+        while len(line) < self.column:
+
+            line.append(" ")
+
+        if self.column < len(line):
+
+            line[self.column] = character
+
+        else:
+
+            line.append(character)
+
+        self.column += 1
+
+    def screen(self) -> list[str]:
+        """
+        What is on it, with the empty rows the cursor sits below left off.
+        """
+
+        rows = ["".join(line) for line in self.rows]
+
+        while rows and not rows[-1]:
+
+            rows.pop()
+
+        return rows
+
+
+def typed(
+    terminal: Terminal,
+    *keys: str | None,
+) -> Callable[[str], str | None]:
+    """
+    A keyboard: one key for each read, None meaning nothing was typed, the
+    terminal echoing back what it is given the way a tty does.
+    """
+
+    replies = iter(keys)
+
+    def ask(prompt: str) -> str | None:
+
+        if prompt:
+
+            terminal.write(prompt)
+
+        key = next(replies, None)
+
+        if key is None:
+
+            return None
+
+        terminal.write(key + "\r\n")
+
+        return key
+
+    return ask
+
+
+class Fetching(Background[list[Media]]):
+    """
+    A listing fetch that takes its time: it answers on the `after`th ask,
+    which is a source still working while the menu is up.
+    """
+
+    def __init__(
+        self,
+        found: list[Media],
+        after: int,
+    ) -> None:
+
+        super().__init__(
+            lambda: found,
+            "Refreshing the listing",
+            "the menu keeps what it had",
+        )
+
+        self._found = found
+        self._left = after
+
+    def start(self) -> None:
+        """
+        Already under way, which is what this models.
+        """
+
+    def done_yet(self) -> bool:
+
+        self._left -= 1
+
+        return self._left < 0
+
+    def value(self) -> list[Media] | None:
+
+        return self._found
+
+
+def fetching(
+    found: list[Media],
+    after: int = 1,
+) -> Callable[[], Background[list[Media]]]:
+    """
+    A source that keeps working across asks.
+    """
+
+    return lambda: Fetching(found, after)
+
+
+def test_a_refreshed_listing_replaces_the_one_that_was_shown(monkeypatch):
     """
     The menu opens on what the cache had and is redrawn with what the
     source says now, so a stale list is never what is left on screen.
     """
 
-    told: list[str] = []
-    cached = listing("An entry from last time")
-    found = listing("An entry from today", "Another from today")
+    terminal = Terminal()
+    monkeypatch.setattr(sys, "stdout", terminal)
 
     chosen = picker.choose(
-        cached,
-        again=refresh_to(found),
-        ask=scripted(None, "1"),
-        tell=told.append,
+        listing("An entry from last time"),
+        again=refresh_to(
+            listing("An entry from today", "Another from today")
+        ),
+        ask=typed(terminal, None, "1"),
+        tell=print,
     )
 
     assert [item.title for item in chosen] == ["An entry from today"]
-    assert told == [
-        picker.REFRESHING,
-        "    1. An entry from last time",
+    assert terminal.screen() == [
         "    Refreshed: 2 item(s)",
         "    1. An entry from today",
         "    2. Another from today",
+        "Play which? [3, 5-7, all, r to refresh, Enter to stop] 1",
+    ]
+
+
+def test_a_refresh_takes_back_every_row_the_menu_wrote(monkeypatch):
+    """
+    The entries, the line a refresh writes and the echo of an answer all
+    pushed the cursor down, so all of them are rows to take back: erasing
+    fewer leaves the head of the old menu above the redrawn one, and the
+    numbering a user reads then names entries the menu no longer holds.
+    """
+
+    terminal = Terminal()
+    monkeypatch.setattr(sys, "stdout", terminal)
+
+    chosen = picker.choose(
+        listing("An entry from last time", "Another from last time"),
+        again=fetching(
+            listing("An entry from today", "Another from today")
+        ),
+        ask=typed(terminal, None, "nonsense", None, "r", None, None, "1"),
+        tell=print,
+    )
+
+    assert [item.title for item in chosen] == ["An entry from today"]
+    assert terminal.screen() == [
+        "    Refreshed: 2 item(s)",
+        "    1. An entry from today",
+        "    2. Another from today",
+        "Play which? [3, 5-7, all, r to refresh, Enter to stop] 1",
     ]
 
 

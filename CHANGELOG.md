@@ -81,6 +81,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A listing that lands behind the menu leaves only the list it found on
+  screen.** The menu redraws itself by walking the cursor up over the rows it
+  wrote and clearing from there, and it counted the entries and the question but
+  none of the rows the terminal had moved down for it: the echo of an answer,
+  the `Refreshing the listing...` line, a `?` for an answer that could not be
+  read. Each of those left the erase short, so the head of the old listing
+  stayed above the redrawn one, and the numbering on screen named entries the
+  menu no longer held. Measured through a model of the terminal on the path from
+  the report (2026-09-23: a cached listing, `r` pressed twice while the feed was
+  still answering): the old list's first four entries stayed on screen, and
+  typing `1` played the new list's first entry. The rows are counted as the menu
+  writes them (`picker.Screen`), the echo included, and `picker.erase` returns to
+  the start of the line before it clears, so a redraw takes back exactly the rows
+  the menu put up.
+
 - **A streamed run's copy of an item is its own, not the last run's with
   this one's written after it.** The bytes fetched for hearing are assembled
   into the file the run keeps, a span at a time, and that file was opened for
