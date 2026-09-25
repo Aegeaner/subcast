@@ -6,11 +6,14 @@ import argparse
 import signal
 import sys
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import NamedTuple
 
 from . import captionbar, config, feeds, listing, meta, picker, retention, shell
-from .background import Background
+from .background import Background, say
+from .caching import Caching
+from .caching import shared as caching_shared
 from .config import DEFAULT_WHISPER_MODEL, cache_dir, save_dir
 from .live import Capture, LiveCaptions
 from .media import (
@@ -21,7 +24,7 @@ from .media import (
     request_headers,
     sanitize_filename,
 )
-from .player import OSC_VISIBILITY, Positions, play_window, play_with_mpv
+from .player import OSC_VISIBILITY, CacheWork, Positions, play_window, play_with_mpv
 from .sources import Media, Source, detect
 from .subtitles import (
     GrowingCaptions,
@@ -34,6 +37,11 @@ from .subtitles import (
     load_model,
     prepare,
 )
+
+# How long a run with no player waits between looks at what the cache work
+# has to say. Short enough that the lines land while they are worth reading,
+# long enough that waiting costs nothing.
+NOTES_POLL_SECONDS = 0.2
 
 
 def caption_style(
@@ -178,8 +186,9 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Print the listing and choose what to play from it - by "
             "number, a range such as 5-7, 'all', or 'r' to fetch the "
-            "listing again. A saved --feed is opened this way whether or "
-            "not this is given."
+            "listing again. A 'd' after an entry downloads it into the "
+            "cache with its subtitles instead of playing it. A saved "
+            "--feed is opened this way whether or not this is given."
         ),
     )
 
@@ -805,6 +814,106 @@ def save_media(
     )
 
 
+def cache_item(
+    media: Media,
+    args: argparse.Namespace,
+) -> None:
+    """
+    Put an item and its subtitles in the cache, whether or not anything is
+    about to play it: the audio the captions are timed against and the
+    transcript made from that audio.
+
+    A later run reuses the transcript rather than hearing the item again.
+    Every line this says goes through `background.say`, which is what lets
+    the queue collect it for whoever owns the screen (`caching.Caching`):
+    this runs behind a player, or a prompt, that draws over the terminal a
+    line would otherwise land on.
+
+    A broadcast is left alone: it has no finished audio to keep, and its
+    captions only exist while it plays.
+    """
+
+    if media.live:
+
+        say(
+            "    A live broadcast cannot be cached while it airs; "
+            "wait for the video of it."
+        )
+
+        return
+
+    audio = acquire(
+        media,
+        cache_stem(media),
+    )
+
+    say(f"    Cached: {audio}")
+
+    prepared = prepare(
+        media,
+        audio,
+        args.whisper_model,
+        args.whisper_device,
+        args.subs_from,
+    )
+
+    say(f"    Subtitles ready: {prepared.srt_path}")
+
+
+def cache_ask(
+    caching: Caching,
+    media: Media,
+    args: argparse.Namespace,
+    source: Source | None = None,
+) -> None:
+    """
+    Ask for an item to be kept: this item's media into the cache and its
+    subtitles made from it, worked through in the background.
+
+    `source` is given for an entry straight out of a listing, and is what
+    resolves the item inside the job rather than in front of whatever plays
+    next: a source whose audio comes out of a resolve hands out a page URL,
+    and a page is not a file. An item the run already resolved is asked for
+    as it is, because resolving it again is another round trip - and, for a
+    source driven through a browser, another browser.
+    """
+
+    caching.ask(
+        media.key,
+        media.title,
+        lambda: cache_item(
+            resolve_item(source, media) if source is not None else media,
+            args,
+        ),
+    )
+
+
+def cache_notes(
+    caching: Caching,
+) -> None:
+    """
+    Say what the cache work has said, and wait for the rest of it.
+
+    A run with a player leaves this to the player, which draws over the same
+    terminal; what is printed here is what was said while nothing was
+    playing, and what is left once playback is over - which is what makes
+    the last line of a run that only downloaded something appear at all.
+    Ctrl-C stops the wait, and the work with it.
+    """
+
+    while not caching.done_yet():
+
+        for line in caching.take_notes():
+
+            say(line)
+
+        caching.wait(NOTES_POLL_SECONDS)
+
+    for line in caching.take_notes():
+
+        say(line)
+
+
 def wants_subtitles(
     media: Media,
     args: argparse.Namespace,
@@ -870,16 +979,14 @@ def resolve_item(
 
     if item.stream and has_transcript(item) and meta.fresh(item):
 
-        print(
-            "    Using the cached transcript; not asking YouTube again.",
-            flush=True,
+        say(
+            "    Using the cached transcript; not asking YouTube again."
         )
 
         return item
 
-    print(
-        f"    Resolving: {item.url}",
-        flush=True,
+    say(
+        f"    Resolving: {item.url}"
     )
 
     return source.resolve(item)
@@ -1330,9 +1437,17 @@ def play_item(
     media: Media,
     args: argparse.Namespace,
     subtitles: PendingSubtitles | None,
+    caching: Caching | None = None,
 ) -> int:
     """
     Audio in the terminal with our captions, video in an mpv window.
+
+    `caching` is the run's queue of items to keep, and it is what the `d`
+    key asks: the same queue a marked entry goes into, so a press while a
+    download is going is queued behind it rather than starting a second one
+    against the same cache files. Its lines are handed over too, for the
+    player to say between redraws - a broadcast has nothing to keep, so it
+    gets the lines but no key.
     """
 
     positions = saved_positions(
@@ -1368,6 +1483,22 @@ def play_item(
         subtitles,
     )
 
+    # What the run has for this item while it plays. A broadcast has no
+    # finished audio to keep, so it gets no key - but its player still says
+    # what the rest of the queue has to say.
+    cache = (
+        CacheWork(
+            press=(
+                None
+                if media.live
+                else partial(cache_ask, caching, media, args)
+            ),
+            notes=caching.take_notes,
+        )
+        if caching is not None
+        else None
+    )
+
     if audio:
 
         if subtitles is not None and caption_style(args) == "bar":
@@ -1381,6 +1512,7 @@ def play_item(
                 stream=media.stream,
                 positions=positions,
                 live=media.live,
+                cache=cache,
             )
 
         return play_with_mpv(
@@ -1394,6 +1526,7 @@ def play_item(
             live=media.live,
             reloading=reloading,
             title=media.title,
+            cache=cache,
         )
 
     return play_window(
@@ -1409,6 +1542,7 @@ def play_item(
         reloading=reloading,
         title=media.title,
         osc=args.osc,
+        cache=cache,
     )
 
 
@@ -1477,9 +1611,19 @@ def main(
 
         if opens_shell(arguments):
 
+            # One queue for the whole session (its items outlive the command
+            # that asked for them), and no command waits for it: the prompt
+            # comes back and the shell says the lines as they land.
+            jobs = caching_shared()
+
             return shell.run(
                 parse_args,
-                run_once,
+                partial(
+                    run_once,
+                    caching=jobs,
+                    wait_for_caching=False,
+                ),
+                jobs=jobs,
             )
 
         return run_once(args)
@@ -1510,6 +1654,8 @@ def opens_shell(
 
 def run_once(
     args: argparse.Namespace,
+    caching: Caching | None = None,
+    wait_for_caching: bool = True,
 ) -> int:
     """
     One command line's worth of work, from finding items to playing them.
@@ -1520,6 +1666,14 @@ def run_once(
     it passes through, so a shell stops the command it is running and a
     command line ends, which is what each of them means by it - and so is
     the signal that asks the whole run to end.
+
+    `caching` is where the items this run is asked to keep are worked
+    through: the shell's own queue, which outlives the command, or - for a
+    command line, which is the whole process - one of this run's. And
+    `wait_for_caching` is what this run's end does with them: a command line
+    waits for them, because the process is all that keeps them alive, and
+    the shell does not - the prompt comes back and the shell says their
+    lines as they land.
     """
 
     try:
@@ -1576,21 +1730,62 @@ def run_once(
 
             return 0
 
+        # Where a `d` is worked through, whether it was a marked entry in the
+        # listing or the key while something plays: the shell's queue, or -
+        # for a command line - this run's own.
+        caching = caching if caching is not None else Caching()
+
         if browsing(args):
 
             print()
 
-            items = picker.choose(
+            picks = picker.choose(
                 items,
                 again,
             )
 
-            if not items:
+            if not picks:
 
                 print(
                     "    Nothing chosen.",
                     flush=True,
                 )
+
+                return 0
+
+            items = [
+                chosen
+                for chosen, download in picks
+                if not download
+            ]
+
+            marked = [
+                chosen
+                for chosen, download in picks
+                if download
+            ]
+
+            if marked:
+
+                print()
+
+            for chosen in marked:
+
+                # Queued, not downloaded here: what was marked waits its turn
+                # behind whatever else was marked, while what was chosen to
+                # play plays.
+                cache_ask(
+                    caching,
+                    chosen,
+                    args,
+                    target.source,
+                )
+
+            if not items:
+
+                if wait_for_caching:
+
+                    cache_notes(caching)
 
                 return 0
 
@@ -1804,6 +1999,7 @@ def run_once(
                     media,
                     args,
                     subtitles,
+                    caching,
                 )
 
             finally:
@@ -1818,6 +2014,15 @@ def run_once(
                     f"    mpv exited with {status}",
                     flush=True,
                 )
+
+        # Whatever is still being kept says so before the run leaves: the
+        # player is gone, and a line about an item that finished after it is
+        # the one thing the `d` was asked for that has not been shown yet. A
+        # shell run leaves them to the shell, which is still there to say
+        # them.
+        if wait_for_caching:
+
+            cache_notes(caching)
 
         return 0
 

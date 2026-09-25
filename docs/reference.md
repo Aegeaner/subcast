@@ -55,7 +55,7 @@ shell.
 | `<url>` | The item, listing or programme to work on. Omitted: subcast opens the feed called `morning`. |
 | `--list` | Print the listing and stop. |
 | `--limit N` | How many entries to play, newest first. Default `1`; `0` plays all. A menu shows the newest `SUBSCAST_LIMIT` (30 by default) unless `N` says otherwise. |
-| `--pick` | Print the listing and read a choice from it. |
+| `--pick` | Print the listing and read a choice from it. A `d` after a choice (`3d`) downloads that entry into the cache with its subtitles instead of playing it. |
 | `--no-pick` | Play the newest entry without asking. |
 | `--search QUERY` | Search YouTube instead of taking a URL. |
 | `--feed NAME` | Open a saved feed, by name or by its number in `--feeds`. With no URL, the feed called `morning` is the one opened. |
@@ -142,8 +142,16 @@ Keys go to mpv, so any binding in your `mpv.conf` works.
 | --- | --- |
 | `q` | Quit. |
 | `m` | Mute or unmute. The terminal block marks a muted stream with `[muted]`. |
+| `d` | Put the item being played into the cache, with its subtitles, without stopping the playback. The work goes into the run's queue and is done beside the playback, so the key does not wait for it: `Cached: <path>` and `Subtitles ready: <path>` are said as each half lands, and asking for the same item again says where it stands instead of queueing it twice. The binding is made over mpv's IPC as playback starts, so it works whether mpv's window or the terminal has the keyboard, and nothing of yours is written into an `input.conf`. It does nothing on a broadcast, which has no finished audio to keep. |
+| `d` in the shell | The same, and the command returns to the prompt while it goes: the item is kept in the background, and its lines are said over the prompt as they land. A command line with no shell waits for them, because the process is all that keeps them alive. |
 | `PageUp`, `PageDown` | Jump to the previous or next published segment. |
 | `Ctrl-C` | Stop what is running and clear the terminal block. In the shell this stops the command and the prompt returns; `/quit` leaves the shell. |
+
+An item being kept prints no progress line, because a percentage replaces the
+line before it: it belongs to a terminal that is watching one thing, and the
+lines of an item being kept are said by whatever owns the screen - a prompt, or
+a caption block. What is said is the file, the model load, the hearing and the
+two lines above.
 
 ## Terminal support
 
@@ -200,6 +208,14 @@ alone, so a stock mpv works.
 | `Captions heard to <n> min of <m> min; the rest is made next run.` | The item ended before the whole file had been heard, so nothing was cached. |
 | `Captions failed: <reason>; playing without them.` | The transcription gave up. Playback carries on. |
 | `A live broadcast cannot be saved while it airs; wait for the video of it.` | `--save` on a broadcast, which has no end to download up to. |
+| `Caching: <title>` | An ask - a `d` choice, or the `d` key - and the item is in the run's queue. |
+| `Cached: <path>` | The item's audio is in the cache. A later run plays that copy. |
+| `Subtitles ready: <path>` | The transcript is made and its subtitles are written. |
+| `Still keeping an item in the cache; Ctrl-C leaves without it.` | The shell was asked to quit while an item was still being kept. The thread goes with the process, so the shell waits; Ctrl-C leaves without the item. |
+| `This item is being cached already.` | The same item was asked for again while it was queued or being worked on. One item is one job, so nothing is queued twice. |
+| `This item is cached already.` | The same item was asked for again after the cache took it. |
+| `Caching failed: <reason>` | The download or the transcription gave up. The queue goes on with the next item, the playback carries on, and the item can be asked for again. |
+| `A live broadcast cannot be cached while it airs; wait for the video of it.` | A broadcast was marked for download. It has no finished audio to keep. |
 | `A broadcast is prepared by playing it; --no-play leaves nothing to do.` | `--no-play` on a broadcast. |
 | `mpv could not load that stream; trying once more...` | The retry after exit status 2. |
 | `YouTube is rate-limiting this video's captions (HTTP 429); trying again in a few minutes usually works` | Every caption track was refused. |

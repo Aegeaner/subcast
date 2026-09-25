@@ -248,6 +248,207 @@ def test_a_property_mpv_answers_is_read_back(monkeypatch):
     assert client.get("nonsense") is None
 
 
+class Mpv:
+    """
+    An mpv the test drives: what it answers, and what it says on its own.
+    """
+
+    def __init__(
+        self,
+        messages: list[list[str]] | None = None,
+    ) -> None:
+
+        self.commands: list[tuple[str, ...]] = []
+        self.said = list(messages or [])
+        self.waits: list[float] = []
+
+    def command(self, *command: str) -> str | None:
+
+        self.commands.append(command)
+
+        return None
+
+    def get(self, name: str):
+
+        return None
+
+    def messages(self, timeout: float = 0.0) -> list[list[str]]:
+
+        self.waits.append(timeout)
+
+        return [self.said.pop(0)] if self.said else []
+
+    def close(self) -> None:
+
+        pass
+
+
+class Running:
+    """A process that plays for one look and then exits."""
+
+    returncode = 0
+
+    def __init__(self, looks: int = 1) -> None:
+
+        self.left = looks
+
+    def poll(self) -> int | None:
+
+        if self.left <= 0:
+
+            return 0
+
+        self.left -= 1
+
+        return None
+
+
+def test_a_key_message_is_not_lost_while_a_property_is_asked_for(monkeypatch):
+    """
+    mpv sends the press while it is answering something else: the reply the
+    request is waiting for is not the message, so the message is kept
+    rather than dropped along with every other line that is not it.
+    """
+
+    client = player.Ipc.__new__(player.Ipc)
+    client.socket = FakeSocket()
+    client.buffer = b""
+    client.request_id = 0
+    client._events = []
+
+    replies = iter(
+        [
+            '{"event": "client-message", "args": ["subcast-cache"]}',
+            '{"data": 6.5, "request_id": 1, "error": "success"}',
+        ]
+    )
+    monkeypatch.setattr(client, "_read_line", lambda: next(replies))
+
+    assert client.get("time-pos") == 6.5
+    assert client.messages() == [["subcast-cache"]]
+
+
+def work(
+    press=None,
+    notes=None,
+) -> player.CacheWork:
+    """
+    What a run has for an item that is playing.
+    """
+
+    return player.CacheWork(
+        press=press,
+        notes=notes or list,
+    )
+
+
+def test_the_cache_key_is_bound_and_a_press_caches(monkeypatch):
+    """
+    mpv is told to bind the key as playback starts, and the press comes back
+    as a message: that is how a run hears a key its own window, rather than
+    the terminal it was started from, took.
+    """
+
+    client = Mpv(messages=[[player.CACHE_MESSAGE]])
+    monkeypatch.setattr(player, "connect", lambda path: client)
+
+    pressed: list[int] = []
+
+    status = player.follow(
+        Running(),
+        Path("/tmp/mpv.sock"),
+        None,
+        cache=work(press=lambda: pressed.append(1)),
+    )
+
+    assert status == 0
+    assert client.commands == [
+        (
+            "keybind",
+            player.CACHE_KEY,
+            f"script-message {player.CACHE_MESSAGE}",
+        ),
+    ]
+    assert pressed == [1]
+
+
+def test_a_message_that_is_not_the_key_asks_for_nothing(monkeypatch):
+    """
+    mpv's socket carries whatever its scripts have to say; only the key's
+    own message is a press.
+    """
+
+    client = Mpv(messages=[["subcast-something-else"]])
+    monkeypatch.setattr(player, "connect", lambda path: client)
+
+    pressed: list[int] = []
+
+    player.follow(
+        Running(),
+        Path("/tmp/mpv.sock"),
+        None,
+        cache=work(press=lambda: pressed.append(1)),
+    )
+
+    assert pressed == []
+
+
+def test_the_players_wait_says_what_the_cache_work_says(capsys):
+    """
+    The lines belong to the run's cache queue and the player is what says
+    them, from the thread that owns the screen: the caption block is drawn
+    on that terminal, and a line printed from the worker would land in the
+    middle of it.
+    """
+
+    client = Mpv()
+    said = [["    Cached: /tmp/episode.mp3"], []]
+
+    key = player.CacheKey(
+        client,
+        work(notes=lambda: said.pop(0)),
+    )
+
+    assert key.wait(0.0) is True
+    assert "Cached: /tmp/episode.mp3" in capsys.readouterr().out
+
+    assert key.wait(0.0) is False
+
+
+def test_a_player_with_nothing_to_cache_waits_without_reading_mpv():
+    """
+    Nothing to keep means no binding and no socket reads: mpv is left as it
+    was, and the wait is the sleep it always was.
+    """
+
+    client = Mpv()
+
+    key = player.CacheKey(client)
+
+    assert key.wait(0.0) is False
+    assert client.commands == []
+    assert client.waits == []
+
+
+def test_a_play_with_lines_but_no_key_binds_nothing():
+    """
+    A broadcast has nothing to keep, so mpv's own `d` is left exactly as the
+    user's configuration has it - but the lines the rest of the run's queue
+    says are still said.
+    """
+
+    client = Mpv()
+
+    key = player.CacheKey(
+        client,
+        work(notes=lambda: ["    Cached: /tmp/episode.mp3"]),
+    )
+
+    assert client.commands == []
+
+    assert key.wait(0.0) is True
+
+
 def test_the_format_argument_stays_off_hls(monkeypatch, capsys):
     """
     A height filter alone lands on YouTube's 1080p "premium" HLS rendition

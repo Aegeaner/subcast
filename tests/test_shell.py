@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
-from subcast import cli, config, feeds, shell
+from subcast import background, caching, cli, config, feeds, shell
 
 
 class Shell:
@@ -41,13 +43,17 @@ class Shell:
 
         return self.script.pop(0) if self.script else None
 
-    def run(self) -> int:
+    def run(
+        self,
+        jobs: caching.Caching | None = None,
+    ) -> int:
 
         return shell.run(
             self.parse,
             self.once,
             read=self.typed,
             tell=self.told.append,
+            jobs=jobs,
         )
 
 
@@ -670,3 +676,103 @@ def test_the_prompt_binds_tab_to_the_completion(
     assert editor.bindings == ["tab: complete"]
     assert editor.completer("b", 0) == "bbcnews"
     assert editor.completer("b", 1) is None
+
+
+def kept(
+    queue: caching.Caching,
+    key: str,
+    work,
+) -> None:
+    """
+    One item asked for, with a title these do not care about.
+    """
+
+    queue.ask(key, "An episode", work)
+
+
+def test_a_line_the_cache_work_has_to_say_is_said_over_the_prompt(capsys):
+    """
+    The prompt is the screen's owner between commands, so the lines a shell's
+    commands asked to keep are said there - with the prompt taken back first
+    and put back afterwards, because the user is about to type on it.
+    """
+
+    jobs = caching.Caching()
+
+    kept(jobs, "one", lambda: background.say("    Cached: /tmp/one.mp3"))
+
+    told: list[str] = []
+
+    def read(prompt: str) -> str | None:
+        # Long enough for a look at what the cache work has to say.
+        time.sleep(0.6)
+        return "/quit"
+
+    assert shell.read_command(read, told.append, jobs) == "/quit"
+
+    written = capsys.readouterr().out
+
+    assert "    Cached: /tmp/one.mp3" in written
+    assert written.endswith(shell.PROMPT)
+
+
+def test_leaving_waits_for_an_item_still_being_kept():
+    """
+    The thread goes with the process, so leaving while an item is being kept
+    would drop it: the shell says so and waits, and what the work says on the
+    way out is said before the prompt is gone for good.
+    """
+
+    jobs = caching.Caching()
+
+    release = threading.Event()
+    said = threading.Event()
+
+    def work() -> None:
+        release.wait(timeout=5)
+        background.say("    Cached: /tmp/one.mp3")
+        said.set()
+
+    kept(jobs, "one", work)
+
+    told: list[str] = []
+
+    def leave() -> int:
+        # The item finishes while the shell is on its way out.
+        threading.Timer(0.1, release.set).start()
+        return shell.leave(jobs, told.append)
+
+    told.append(str(leave()))
+
+    assert told[0] == ""
+    assert "Still keeping an item in the cache" in told[1]
+    assert "    Cached: /tmp/one.mp3" in told
+    assert said.is_set()
+
+
+def test_leaving_an_idle_shell_says_nothing_about_keeping():
+    jobs = caching.Caching()
+    told: list[str] = []
+
+    assert shell.leave(jobs, told.append) == 0
+
+    assert told == []
+
+
+def test_the_shell_says_what_a_command_left_to_say():
+    """
+    A command that leaves the shell with lines to say - because the item it
+    asked to keep landed while the next command was being typed - has them
+    said before that command runs.
+    """
+
+    jobs = caching.Caching()
+    kept(jobs, "one", lambda: background.say("    Cached: /tmp/one.mp3"))
+
+    jobs.wait(5)
+
+    session = Shell("/quit")
+
+    assert session.run(jobs) == 0
+
+    assert "    Cached: /tmp/one.mp3" in session.told

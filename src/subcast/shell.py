@@ -17,6 +17,12 @@ command that is running - playback included, whose mpv is terminated and
 whose caption block is cleared on the way out - and the next command is
 read. A run told to end by a signal is not caught here: that is the shell
 being told to go away.
+
+An item a command asked to keep outlives the command: the prompt comes back
+while it is downloaded and heard, and the shell is what says the lines the
+work has to say - over the prompt, and again when a command has been read
+(`Keeper`). Leaving the shell is the one moment it waits for that work
+(`leave`), because the thread goes with the process.
 """
 
 from __future__ import annotations
@@ -25,10 +31,11 @@ import argparse
 import shutil
 import sys
 import textwrap
+import threading
 from collections.abc import Callable
 from typing import NamedTuple
 
-from . import feeds
+from . import caching, feeds
 
 # What `input` reads a line with when a line editor is there to read it.
 # TAB completion is the editor's, so a platform that has none is a prompt
@@ -42,6 +49,11 @@ except ImportError:  # pragma: no cover - no line editor to complete with
     readline = None
 
 PROMPT = "subcast> "
+
+# How often the prompt looks for a line the cache work has to say. Short
+# enough that a completion lands while the user is still looking at it, long
+# enough that looking costs nothing.
+NOTICE_SECONDS = 0.25
 
 # Ctrl-C, said where it landed: a command was stopped, or there was nothing
 # running to stop and what the prompt is waiting for is a command.
@@ -243,16 +255,92 @@ def typed_line(
         return None
 
 
+def kept_lines(
+    jobs: caching.Caching,
+    tell: Callable[[str], None],
+) -> None:
+    """
+    Whatever the cache work has said since the last look.
+    """
+
+    for line in jobs.take_notes():
+
+        tell(line)
+
+
+class Keeper(threading.Thread):
+    """
+    Says what the cache work has to say while the prompt waits for a command.
+
+    The prompt is the screen's owner between commands, so the lines are said
+    there rather than by the worker that produced them: the prompt line is
+    taken back, the lines are written, and the prompt is put back for the
+    command about to be typed. Nothing typed means nothing is lost.
+
+    Something typed means the lines wait - they are only taken when they are
+    about to be written, so none of them is said twice - and the shell says
+    them once the command has been read, or the run that command starts says
+    them while it plays.
+
+    A platform whose `input` has no line editor cannot say what is on the
+    line, so it says nothing and leaves every line to those moments.
+    """
+
+    def __init__(
+        self,
+        jobs: caching.Caching,
+    ) -> None:
+
+        super().__init__(daemon=True)
+
+        self._jobs = jobs
+        self._stopping = threading.Event()
+
+    def run(self) -> None:
+
+        while not self._stopping.wait(NOTICE_SECONDS):
+
+            if readline is None or readline.get_line_buffer():
+
+                continue
+
+            lines = self._jobs.take_notes()
+
+            if not lines:
+
+                continue
+
+            sys.stdout.write("\r\x1b[K")
+
+            for line in lines:
+
+                sys.stdout.write(line + "\n")
+
+            sys.stdout.write(PROMPT)
+            sys.stdout.flush()
+
+    def stop(self) -> None:
+
+        self._stopping.set()
+
+
 def read_command(
     read: Callable[[str], str | None],
     tell: Callable[[str], None],
+    jobs: caching.Caching,
 ) -> str | None:
     """
     A command typed at the prompt, or None when the input has ended.
 
     Ctrl-C at the prompt has nothing to stop, and the prompt comes back
-    either way: /quit is how a shell is left.
+    either way: /quit is how a shell is left. What the cache work has to say
+    is said while the prompt is up (`Keeper`), because that is the only
+    moment the shell owns the screen between commands.
     """
+
+    keeper = Keeper(jobs)
+
+    keeper.start()
 
     try:
 
@@ -263,6 +351,10 @@ def read_command(
         tell(NOTHING_RUNNING)
 
         return ""
+
+    finally:
+
+        keeper.stop()
 
 
 def run_command(
@@ -486,35 +578,75 @@ def show_help(
     tell(detail)
 
 
+def leave(
+    jobs: caching.Caching,
+    tell: Callable[[str], None],
+) -> int:
+    """
+    End the shell, giving the cache work what it is still waiting for.
+
+    Leaving while an item is being kept would drop it, because the thread
+    goes with the process: the shell says so and waits, and Ctrl-C is how to
+    leave without it - which is what a second Ctrl-C would mean anywhere
+    else here.
+    """
+
+    if not jobs.done_yet():
+
+        tell("")
+        tell(
+            "    Still keeping an item in the cache; "
+            "Ctrl-C leaves without it."
+        )
+
+        jobs.wait()
+
+    kept_lines(jobs, tell)
+
+    return 0
+
+
 def run(
     parse: Callable[[list[str]], argparse.Namespace],
     once: Callable[[argparse.Namespace], int],
     read: Callable[[str], str | None] = typed_line,
     tell: Callable[[str], None] = print,
+    jobs: caching.Caching | None = None,
 ) -> int:
     """
     Read commands until /quit, the end of the input, or a signal.
 
     `parse` and `once` are the command line's own, so a command is the
-    arguments it means and running one is what any other run does.
+    arguments it means and running one is what any other run does. `jobs` is
+    the queue the runs of this shell ask to keep items in - the process's
+    own unless a caller says otherwise - and the shell is what says its
+    lines while the prompt is up.
     """
+
+    jobs = jobs if jobs is not None else caching.shared()
 
     tell(greeting())
 
     while True:
 
-        line = read_command(read, tell)
+        kept_lines(jobs, tell)
+
+        line = read_command(read, tell, jobs)
 
         if line is None:
 
             tell("")
 
-            return 0
+            return leave(jobs, tell)
 
         name, _, argument = line.strip().partition(" ")
 
         name = name.strip()
         argument = argument.strip()
+
+        # Typed while a notice was waiting for an empty line, or read by a
+        # platform that cannot say what is on the line.
+        kept_lines(jobs, tell)
 
         if not name:
 
@@ -534,7 +666,7 @@ def run(
             # only other one, which prints rather than runs.
             if name == "/quit":
 
-                return 0
+                return leave(jobs, tell)
 
             show_help(argument, tell)
 

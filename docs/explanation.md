@@ -335,6 +335,37 @@ the end forgets its position instead of resuming at the credits. `--no-resume`
 starts over, and an item of unknown length, such as a live stream, never keeps a
 position.
 
+## Keeping what plays
+
+`d` means keep this: the media into the cache, and the subtitles made from it.
+The work belongs to the run rather than to the player, so it goes through one
+queue, one item at a time, instead of a thread per press.
+
+- One at a time, because the hearing is where the model is. A download is the
+  quick part, and a hearing loads a Whisper model of its own, so three items
+  asked for at once through three threads would hold three models at once. The
+  order asked for is the order kept.
+- Asking twice is one job. Two jobs for one item would be two writers of
+  `<id>.mp3` and `<id>.cues.json`, and the loser's half-written file is what a
+  later run would read.
+- The item being played is not in the queue. Its captions are what the user is
+  watching, and a broadcast's have to be heard as they air, so nothing in the
+  queue is allowed to hold them up. That leaves at most two hearings in flight:
+  the one playing, and the one being kept.
+- The lines belong to whoever owns the screen. A player draws the caption block
+  on the same terminal they would land on, and a shell's prompt is where the
+  next command is being typed, so the worker never prints for itself: its output
+  is collected (`background.listening`) and said by the player between redraws,
+  by the shell over the prompt, or by a run that is waiting for the work itself.
+  That is why a percentage is not among them - a progress line replaces the one
+  before it, so it belongs to a terminal that is watching one thing.
+- A command's item outlives the command in the shell, and only there. The
+  queue belongs to the process (`caching.shared`), so `1d` hands the prompt back
+  while the item is downloaded and heard and a later command says its lines. A
+  command line waits for what it asked to keep, because the process is the only
+  thing keeping it alive; the shell waits only when it is left (`shell.leave`),
+  where Ctrl-C is how to leave without it.
+
 ## mpv integration
 
 Subcast drives mpv over its IPC socket. Two mpv behaviours are worth knowing if
@@ -361,6 +392,12 @@ you read the code.
   not what scales it: `osc-scalewindowed` and `osc-scalefullscreen` are, one for
   each kind of window, so a run asks for both. Its caption-sized text is read at
   a glance, which is why the captions a window draws are asked for bigger too.
+- A key of subcast's own is bound over the IPC socket rather than written into
+  an input file: `--input-conf` names the only input file mpv reads, so a run
+  that passed one would leave the user's own bindings out. mpv runs the binding
+  wherever the press came from - its window, or the terminal the run was started
+  from - and reports it back as a client message, which is the only way a key
+  its window took reaches the run.
 - The captions mpv draws over the picture are sized by `sub-font-size`, whose
   default suits a stray subtitle rather than a run opened for its captions, so a
   window run asks for a size of its own. The terminal paths draw their captions

@@ -46,11 +46,52 @@ def test_a_listing_line_carries_the_duration_when_there_is_one():
 
 
 def test_a_selection_names_entries_by_number_range_or_all():
-    assert picker.parse_selection("3", 5) == [2]
-    assert picker.parse_selection("2, 5-7", 10) == [1, 4, 5, 6]
-    assert picker.parse_selection("3,3", 5) == [2]
-    assert picker.parse_selection("all", 3) == [0, 1, 2]
+    assert picker.parse_selection("3", 5) == [(2, False)]
+    assert picker.parse_selection("2, 5-7", 10) == [
+        (1, False),
+        (4, False),
+        (5, False),
+        (6, False),
+    ]
+    assert picker.parse_selection("3,3", 5) == [(2, False)]
+    assert picker.parse_selection("all", 3) == [
+        (0, False),
+        (1, False),
+        (2, False),
+    ]
     assert picker.parse_selection("", 3) == []
+
+
+def test_a_selection_may_mark_entries_for_the_cache():
+    """
+    A `d` after an entry is the same selection asking for that entry to be
+    downloaded into the cache with its subtitles rather than played, and a
+    mark on any mention of an entry is a mark on the entry.
+    """
+
+    assert picker.parse_selection("3d", 5) == [(2, True)]
+    assert picker.parse_selection("2d,5", 10) == [(1, True), (4, False)]
+    assert picker.parse_selection("5-7d", 8) == [
+        (4, True),
+        (5, True),
+        (6, True),
+    ]
+    assert picker.parse_selection("3d,3", 5) == [(2, True)]
+    assert picker.parse_selection("alld", 3) == [
+        (0, True),
+        (1, True),
+        (2, True),
+    ]
+
+
+def test_a_mark_that_names_nothing_is_asked_about_again():
+    """
+    The `d` is a suffix on a selection and not a selection of its own, so
+    one with nothing in front of it is read the way any other nonsense is.
+    """
+
+    assert picker.parse_selection("d", 5) is None
+    assert picker.parse_selection("3d-5", 5) is None
 
 
 @pytest.mark.parametrize(
@@ -78,10 +119,34 @@ def test_the_picker_shows_the_listing_and_plays_what_was_chosen():
         tell=told.append,
     )
 
-    assert [item.title for item in chosen] == ["First"]
+    assert [item.title for item, _download in chosen] == ["First"]
     assert told == [
         "    1. First",
         "    2. Second",
+    ]
+
+
+def test_the_picker_says_which_entries_were_marked_for_download():
+    """
+    A marked entry and a played one both come back, and the mark is what
+    tells them apart: the caller caches one and plays the other, in the
+    order the selection named them.
+    """
+
+    answers = iter(["2d,1"])
+
+    chosen = picker.choose(
+        listing("First", "Second"),
+        ask=lambda prompt: next(answers),
+        tell=lambda line: None,
+    )
+
+    assert [
+        (item.title, download)
+        for item, download in chosen
+    ] == [
+        ("First", False),
+        ("Second", True),
     ]
 
 
@@ -95,7 +160,7 @@ def test_an_unreadable_answer_is_asked_again():
         tell=told.append,
     )
 
-    assert [item.title for item in chosen] == ["Second"]
+    assert [item.title for item, _download in chosen] == ["Second"]
     assert told[-1] == picker.COMPLAINT
 
 
@@ -379,12 +444,15 @@ def test_a_refreshed_listing_replaces_the_one_that_was_shown(monkeypatch):
         tell=print,
     )
 
-    assert [item.title for item in chosen] == ["An entry from today"]
+    assert [item.title for item, _download in chosen] == ["An entry from today"]
     assert terminal.screen() == [
         "    Refreshed: 2 item(s)",
         "    1. An entry from today",
         "    2. Another from today",
-        "Play which? [3, 5-7, all, r to refresh, Enter to stop] 1",
+        (
+            "Play which? [3, 5-7, 3d to download, all, r to refresh, "
+            "Enter to stop] 1"
+        ),
     ]
 
 
@@ -408,12 +476,15 @@ def test_a_refresh_takes_back_every_row_the_menu_wrote(monkeypatch):
         tell=print,
     )
 
-    assert [item.title for item in chosen] == ["An entry from today"]
+    assert [item.title for item, _download in chosen] == ["An entry from today"]
     assert terminal.screen() == [
         "    Refreshed: 2 item(s)",
         "    1. An entry from today",
         "    2. Another from today",
-        "Play which? [3, 5-7, all, r to refresh, Enter to stop] 1",
+        (
+            "Play which? [3, 5-7, 3d to download, all, r to refresh, "
+            "Enter to stop] 1"
+        ),
     ]
 
 
@@ -451,7 +522,7 @@ def test_a_refresh_still_running_cannot_renumber_the_menu():
 
     release.set()
 
-    assert [item.title for item in chosen] == ["Old second"]
+    assert [item.title for item, _download in chosen] == ["Old second"]
 
 
 def test_the_refresh_key_starts_another_fetch():
@@ -475,7 +546,7 @@ def test_the_refresh_key_starts_another_fetch():
     )
 
     assert len(started) == 2
-    assert [item.title for item in chosen] == ["An entry from today"]
+    assert [item.title for item, _download in chosen] == ["An entry from today"]
     assert told.count(picker.REFRESHING) == 2
 
 
@@ -503,7 +574,7 @@ def test_a_failed_refresh_is_said_once_and_the_menu_goes_on():
         tell=told.append,
     )
 
-    assert [item.title for item in chosen] == ["An entry from last time"]
+    assert [item.title for item, _download in chosen] == ["An entry from last time"]
     assert started == [1]
     assert (
         told.count(

@@ -2,11 +2,85 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 from collections.abc import Callable
+from contextlib import contextmanager
 from typing import Generic, TypeVar
 
 T = TypeVar("T")
+
+# Where this thread's lines go while something else owns the screen. Thread
+# local because the worker is the one that must not print: the player drawing
+# the caption block, or the prompt waiting for the next command, is what says
+# the lines the worker produces.
+_SINK = threading.local()
+
+
+def say(
+    line: str,
+    progress: bool = False,
+) -> None:
+    """
+    One line of a job's output, said where it belongs.
+
+    A line goes to the terminal in one write: two threads say things while a
+    run goes on - the one that owns the screen, and the worker behind it -
+    and `print` writes the text and its newline separately, so one line can
+    land inside another. Measured on the picker's own `Caching:` line, which
+    came out with the worker's `Resolving:` line through the middle of it.
+
+    `progress` is a line that replaces the one before it - a percentage, say
+    - so it is written without a newline. While something else owns the
+    screen it is dropped instead of collected: a percentage belongs to a
+    terminal that is watching one thing, and a prompt with a command being
+    typed on it is not that terminal. A line with nothing on it is not a
+    line either: it is what ends a progress line, and there is none to end.
+    """
+
+    collect = getattr(_SINK, "collect", None)
+
+    if collect is not None:
+
+        if line and not progress:
+
+            collect(line)
+
+        return
+
+    if progress:
+
+        sys.stdout.write("\r" + line)
+
+    else:
+
+        sys.stdout.write(line + "\n")
+
+    sys.stdout.flush()
+
+
+@contextmanager
+def listening(
+    collect: Callable[[str], None],
+):
+    """
+    Hand this thread's lines to `collect` instead of the terminal.
+
+    Installed by whatever is running a job behind a screen - the run's cache
+    queue - and taken down when the job ends, so the thread that owns the
+    screen says them when it can (`player.CacheKey.wait`, `cli.cache_notes`,
+    `shell.Keeper`).
+    """
+
+    _SINK.collect = collect
+
+    try:
+
+        yield
+
+    finally:
+
+        _SINK.collect = None
 
 
 class Background(Generic[T]):

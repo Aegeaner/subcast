@@ -9,6 +9,8 @@ from pathlib import Path
 
 import requests
 
+from .background import say
+
 AUDIO_SUFFIXES = (
     ".mp3",
     ".m4a",
@@ -313,9 +315,8 @@ def download_audio(
             downloaded = 0
             last_reported_mb = -1
 
-            print(
-                f"    File: {output_path}",
-                flush=True,
+            say(
+                f"    File: {output_path}"
             )
 
             with open(
@@ -362,24 +363,22 @@ def download_audio(
                                 * 100
                             )
 
-                            print(
-                                f"\r    Downloaded: "
+                            say(
+                                f"    Downloaded: "
                                 f"{downloaded / 1024 / 1024:.1f} MB "
                                 f"({percent:.1f}%)",
-                                end="",
-                                flush=True,
+                                progress=True,
                             )
 
                         else:
 
-                            print(
-                                f"\r    Downloaded: "
+                            say(
+                                f"    Downloaded: "
                                 f"{downloaded / 1024 / 1024:.1f} MB",
-                                end="",
-                                flush=True,
+                                progress=True,
                             )
 
-            print()
+            say("")
 
         # Only expose the final filename after
         # the download completed successfully.
@@ -387,10 +386,9 @@ def download_audio(
             output_path
         )
 
-        print(
+        say(
             f"    Saved successfully: "
-            f"{output_path}",
-            flush=True,
+            f"{output_path}"
         )
 
         return output_path

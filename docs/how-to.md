@@ -181,6 +181,19 @@ subcast <url> --pick
 Type one number (`3`), several (`2,5-7`), `all`, or press Enter to stop. Press
 `r` to fetch the listing again; the menu is redrawn with what came back.
 
+Put a `d` after a choice to download that entry into the cache with its
+subtitles instead of playing it:
+
+```
+Play which? [3, 5-7, 3d to download, all, r to refresh, Enter to stop] 2d,1
+```
+
+That keeps the second entry for later and plays the first. The keeping happens
+beside the playback - a marked entry does not delay what you play - so Subcast
+says `Cached: <path>` when the media is in the cache and `Subtitles ready:
+<path>` when the transcript is made, each while the run goes on. A run that
+only downloads opens no player.
+
 The menu opens on the listing the previous run fetched, so it appears at once,
 and refreshes it behind the menu. The numbers always mean what is on screen, so
 an answer cannot land on an entry that was not there when you typed it.
@@ -313,6 +326,36 @@ subcast <url> --save --subs
 ```
 
 `--quality` caps the video height of what is saved.
+
+## Keep what is playing
+
+Press `d` while an item plays to download that item into the cache and make its
+subtitles, without stopping the playback. Subcast says `Cached: <path>` when the
+media is in the cache and `Subtitles ready: <path>` when the transcript is made,
+each as it lands.
+
+From the shell, a command that only keeps something returns to the prompt while
+the item is downloaded and heard:
+
+```bash
+subcast  # or run `subcast` with no arguments
+/feed my-show
+Play which? [...] 1d
+```
+
+The prompt comes back at once and the lines appear above it as they land. Keep
+typing: a line waits for a moment when nothing is on the line, and is said as
+soon as the command you are typing is read. A command line with no shell waits
+for the item instead, because the process is all that keeps it alive.
+
+The transcript is cached, so a later run reuses it rather than hearing the item
+again. The work waits its turn behind whatever else the shell is keeping: items
+are kept one at a time, in the order they were asked for.
+
+The key is read by mpv, wherever the keyboard is - its window, or the terminal
+the run was started from - and it does nothing on a live broadcast, which has no
+finished audio to keep. A press while the caching is going says so rather than
+starting it twice.
 
 ## Resume or start over
 

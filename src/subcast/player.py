@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import select
 import shutil
 import socket
 import subprocess
@@ -10,7 +11,9 @@ import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 
+from .background import say
 from .meta import Streams
 from .subtitles import GrowingCaptions, PendingSubtitles
 
@@ -67,6 +70,34 @@ OSC_VISIBILITY = "always"
 # `--osd-font-size` is not what these are). Its title and clock are read at
 # a glance, so they are drawn a third larger, in step with the captions.
 OSC_SCALE = 1.33
+
+# The key that asks for what is playing to be cached with its subtitles, and
+# the message mpv sends back when it is pressed. mpv's own `d` binds a weak
+# `cycle deinterlace`, and a binding made over IPC is stronger than a weak
+# one, so the run's key is the one that runs.
+CACHE_KEY = "d"
+
+CACHE_MESSAGE = "subcast-cache"
+
+# How long a player's wait may run before it says what the cache work has
+# said: short enough that a line lands while it is worth reading, long enough
+# that waiting costs nothing.
+CACHE_POLL_SECONDS = 0.5
+
+
+class CacheWork(NamedTuple):
+    """
+    What a run has for the item playing: what its `d` key asks for, and the
+    lines the cache work has to say.
+
+    Both belong to the run rather than to the player: the key asks the same
+    queue a marked entry goes into, and where the lines come from is that
+    queue. The player is what says them, because the caption block is drawn
+    on the terminal they would otherwise land in.
+    """
+
+    press: Callable[[], None] | None
+    notes: Callable[[], list[str]]
 
 
 def retry_load_error(
@@ -229,6 +260,10 @@ class Ipc:
         self.buffer = b""
         self.request_id = 0
 
+        # What mpv said that was not an answer to a request: a key binding's
+        # `client-message`, kept until the player asks for it.
+        self._events: list[list[str]] = []
+
     def get(self, name: str):
         """
         A property's value, or None when mpv has no answer to give - which
@@ -313,6 +348,87 @@ class Ipc:
             ):
                 return message
 
+            # Not this request's answer: mpv sent something of its own -
+            # a binding's message - while it was answering.
+            self._keep(message)
+
+    def messages(
+        self,
+        timeout: float = 0.0,
+    ) -> list[list[str]]:
+        """
+        The `client-message` events mpv has sent, each as its arguments, and
+        waits up to `timeout` seconds for the first of them.
+
+        This is how a key reaches the run: mpv is told to bind it to
+        `script-message`, and the key is run by mpv whoever took the press -
+        its own window, or the terminal it was started from - so a run only
+        learns about it this way.
+
+        A message that arrived while a property was being asked for is
+        waiting here already, because it was made room for rather than
+        dropped; `timeout` then decides whether to sit on the socket for
+        one that has not come yet.
+        """
+
+        deadline = time.monotonic() + max(timeout, 0.0)
+
+        while True:
+
+            if self._events:
+
+                found = self._events
+                self._events = []
+
+                return found
+
+            remaining = deadline - time.monotonic()
+
+            if remaining <= 0:
+
+                return []
+
+            readable, _, _ = select.select(
+                [self.socket],
+                [],
+                [],
+                remaining,
+            )
+
+            if not readable:
+
+                return []
+
+            line = self._read_line()
+
+            if line is None:
+
+                return []
+
+            try:
+                message = json.loads(line)
+
+            except ValueError:
+                continue
+
+            self._keep(message)
+
+    def _keep(self, message: dict) -> None:
+        """
+        Note what mpv sent on its own account, for the next look.
+        """
+
+        if message.get("event") != "client-message":
+
+            return
+
+        self._events.append(
+            [
+                str(argument)
+                for argument in message.get("args") or []
+            ]
+        )
+
     def _read_line(self) -> str | None:
 
         while b"\n" not in self.buffer:
@@ -387,20 +503,126 @@ def socket_directory() -> Path:
     )
 
 
+class CacheKey:
+    """
+    `d`: the key that puts the item being played into the cache.
+
+    The binding is made over IPC as playback starts, rather than written
+    into an input file, so nothing of the user's own mpv configuration is
+    replaced. mpv is what runs the key - its window and the terminal it was
+    started from both give it the press - and it reports the press back
+    through the same socket as a `client-message`, which is the only way a
+    key the window took ever reaches the run.
+
+    `wait` is the sleep the player would have taken anyway, spent waiting
+    for mpv to say something instead: a press ends it at once, and a player
+    with nothing to watch sleeps exactly as long as it asked to. It is also
+    where the run's cache work is heard from: the lines are printed here,
+    from the thread that owns the screen, rather than from the worker that
+    said them, and `wait` says whether any of them went over the block.
+    """
+
+    def __init__(
+        self,
+        client: Ipc,
+        work: CacheWork | None = None,
+    ) -> None:
+
+        self._client = client
+        self._work = work
+
+        if work is None or work.press is None:
+
+            return
+
+        problem = client.command(
+            "keybind",
+            CACHE_KEY,
+            f"script-message {CACHE_MESSAGE}",
+        )
+
+        if problem is not None:
+
+            print(
+                f"    mpv would not bind {CACHE_KEY} ({problem}); "
+                "what plays cannot be cached with a key.",
+                flush=True,
+            )
+
+    def wait(
+        self,
+        seconds: float,
+    ) -> bool:
+        """
+        Spend `seconds` waiting: keep what plays if the key was pressed, and
+        say what the cache work has to say.
+
+        True means a line was printed over whatever is drawing, so the
+        caption block has to be drawn again. The wait is taken in steps
+        while those lines are coming, because a line said at the end of a
+        long wait is a line said late.
+        """
+
+        if self._work is None:
+
+            time.sleep(seconds)
+
+            return False
+
+        said = False
+        deadline = time.monotonic() + seconds
+
+        while True:
+
+            step = max(
+                min(
+                    deadline - time.monotonic(),
+                    CACHE_POLL_SECONDS,
+                ),
+                0.0,
+            )
+
+            if self._work.press is not None:
+
+                for message in self._client.messages(step):
+
+                    if message[:1] == [CACHE_MESSAGE]:
+
+                        # The press says a line of its own - what became of
+                        # it - and the block has to be drawn again over it.
+                        self._work.press()
+                        said = True
+
+            elif step > 0:
+
+                time.sleep(step)
+
+            for line in self._work.notes():
+
+                say(line)
+
+                said = True
+
+            if time.monotonic() >= deadline:
+
+                return said
+
+
 def run_mpv(
     command: list[str],
     positions: Positions | None = None,
     subtitles: PendingSubtitles | None = None,
     rebuild: Callable[[], list[str]] | None = None,
+    cache: CacheWork | None = None,
 ) -> int:
     """
-    Play through mpv, remembering where the item gets to and handing it the
-    subtitles once they are ready.
+    Play through mpv, remembering where the item gets to, handing it the
+    subtitles once they are ready, and caching it if the key is pressed.
 
-    With neither, mpv is left entirely to itself, which is what every
-    caller did before resumes and background subtitles existed. `rebuild`
-    builds the command again for a retry, which is what a run holding signed
-    stream URLs wants.
+    With none of them, mpv is left entirely to itself, which is what every
+    caller did before resumes, background subtitles and the cache key
+    existed. `rebuild` builds the command again for a retry, which is what a
+    run holding signed stream URLs wants.
     """
 
     def play() -> int:
@@ -409,6 +631,7 @@ def run_mpv(
             command,
             positions,
             subtitles,
+            cache,
         )
 
     def refresh() -> int:
@@ -417,6 +640,7 @@ def run_mpv(
             rebuild(),
             positions,
             subtitles,
+            cache,
         )
 
     return retry_load_error(
@@ -433,9 +657,10 @@ def _run_once(
     command: list[str],
     positions: Positions | None = None,
     subtitles: PendingSubtitles | None = None,
+    cache: CacheWork | None = None,
 ) -> int:
 
-    if positions is None and subtitles is None:
+    if positions is None and subtitles is None and cache is None:
 
         return subprocess.run(
             command,
@@ -462,6 +687,7 @@ def _run_once(
             socket_path,
             positions,
             subtitles,
+            cache,
         )
 
     finally:
@@ -683,11 +909,12 @@ def follow(
     socket_path: Path,
     positions: Positions | None,
     subtitles: PendingSubtitles | None = None,
+    cache: CacheWork | None = None,
 ) -> int:
     """
     Write down where mpv is up to while it plays, so a run that ends
-    abruptly still resumes where it stopped - and give mpv the subtitles
-    once they are ready.
+    abruptly still resumes where it stopped - give mpv the subtitles once
+    they are ready - and keep an ear out for the key that caches the item.
 
     A broadcast is the case that never becomes ready: its captions are made
     while it airs, so the file is handed over as soon as the first cues are
@@ -700,6 +927,8 @@ def follow(
 
     if client is None:
         return process.wait()
+
+    key = CacheKey(client, cache)
 
     waiting = subtitles is not None
 
@@ -745,7 +974,7 @@ def follow(
                     waiting = False
                     view = LiveView(client, live)
 
-            time.sleep(
+            key.wait(
                 SUBTITLES_POLL_SECONDS
                 if waiting or view is not None
                 else SAVE_SECONDS
@@ -831,6 +1060,7 @@ def play_with_mpv(
     live: bool = False,
     reloading: bool = False,
     title: str | None = None,
+    cache: CacheWork | None = None,
 ) -> int:
     """
     Play audio through mpv's own terminal output.
@@ -854,6 +1084,8 @@ def play_with_mpv(
     the captions are ours and the status line is off - so it is there for
     the surfaces mpv has that we do not: the OSD, and the window title a
     user's own settings build from `media-title`.
+
+    `cache` is what the key that caches the item asks for (`CacheKey`).
     """
 
     mpv = mpv_path()
@@ -977,6 +1209,7 @@ def play_with_mpv(
             if streams is not None
             else None
         ),
+        cache=cache,
     )
 
 
@@ -993,6 +1226,7 @@ def play_window(
     reloading: bool = False,
     title: str | None = None,
     osc: str = OSC_VISIBILITY,
+    cache: CacheWork | None = None,
 ) -> int:
     """
     Play video in an mpv window, with the subtitles we produced.
@@ -1019,6 +1253,9 @@ def play_window(
     - a signed stream link, or a page - which is what the title bar would
     otherwise show. It is forced onto `media-title`, so the title the
     user's own `--title` builds from that property is what is drawn.
+
+    `cache` is what the key that caches the item asks for (`CacheKey`),
+    bound to mpv's own keyboard so it works while the window has it.
     """
 
     mpv = mpv_path()
@@ -1165,4 +1402,5 @@ def play_window(
             if streams is not None
             else None
         ),
+        cache=cache,
     )

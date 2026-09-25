@@ -8,6 +8,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **An item can be kept in the background, without watching it.** A `d` after a
+  choice in the picker - `3d` from a feed or a channel's listing - downloads that
+  entry into the cache and makes its subtitles there instead of playing it, and a
+  selection can mix the two (`2d,1`). Pressing `d` while an item plays does the
+  same for the item that is playing. Nothing waits for any of it: what was chosen
+  to play plays on, a shell's prompt comes straight back while the item is
+  downloaded and heard, and each half says so as it lands (`Cached: <path>`,
+  `Subtitles ready: <path>`) - said by the player between redraws, or by the
+  shell over its prompt, never printed by the worker that produced them. Items
+  are kept one at a time in the order they were asked for, because a hearing
+  loads a Whisper model of its own and a thread each would be several models at
+  once, and asking for an item twice is one job rather than two writers of the
+  same cache files. A command line with no shell waits for what it asked to
+  keep, since the process is all that keeps it alive. The key is bound over
+  mpv's IPC as playback starts rather than written into an `input.conf`, so
+  nothing of the user's own configuration is replaced, and a press reaches the
+  run whether mpv's window or the terminal took it. A broadcast has neither:
+  there is no finished audio to keep. (`picker.parse_selection`,
+  `caching.Caching`, `caching.shared`, `background.listening`, `cli.cache_ask`,
+  `player.CacheWork`, `player.CacheKey`, `shell.Keeper`, `Ipc.messages`)
+
 - **The cache cleans itself up.** A run drops what it cached for an item that has
   gone untouched for over a week: its audio, the transcript heard from that
   audio, the subtitles, the segments, the position and any `.part` a killed

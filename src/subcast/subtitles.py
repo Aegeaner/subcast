@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import requests
 
 from . import config
-from .background import Background
+from .background import Background, say
 from .chapters import write_chapters_file
 from .media import fetch_range, find_cached_audio, media_duration
 from .segments import (
@@ -193,9 +193,8 @@ def transcribe(
         device,
     )
 
-    print(
-        "    Transcribing (this takes a while)...",
-        flush=True,
+    say(
+        "    Transcribing (this takes a while)..."
     )
 
     stream, info = _stream(
@@ -232,16 +231,15 @@ def transcribe(
 
             last_reported = minute
 
-            print(
-                f"\r    Transcribed: "
+            say(
+                f"    Transcribed: "
                 f"{minute} min / "
                 f"{info.duration / 60:.0f} min "
                 f"({segment.end / info.duration * 100:.0f}%)",
-                end="",
-                flush=True,
+                progress=True,
             )
 
-    print()
+    say("")
 
     if not cues:
 
@@ -460,12 +458,11 @@ def load_model(
 
     for candidate_device, compute_type in candidates:
 
-        print(
+        say(
             f"    Loading Whisper model "
             f"{model_name} "
             f"({candidate_device}/"
-            f"{compute_type})...",
-            flush=True,
+            f"{compute_type})..."
         )
 
         try:
@@ -484,10 +481,9 @@ def load_model(
 
             last_error = exc
 
-            print(
+            say(
                 f"    {candidate_device} "
-                f"unavailable: {exc}",
-                flush=True,
+                f"unavailable: {exc}"
             )
 
     if model is None:
@@ -619,9 +615,8 @@ def fetch_captions(
 
     for captions_track in captions:
 
-        print(
-            f"    Fetching captions: {captions_track.language}",
-            flush=True,
+        say(
+            f"    Fetching captions: {captions_track.language}"
         )
 
         try:
@@ -657,9 +652,8 @@ def fetch_captions(
 
         if fetcher is not None:
 
-            print(
-                "    Fetching captions with yt-dlp...",
-                flush=True,
+            say(
+                "    Fetching captions with yt-dlp..."
             )
 
             path = fetcher(
@@ -692,10 +686,9 @@ def fetch_captions(
             "the published captions were empty"
         )
 
-    print(
+    say(
         f"    Published captions ({worked.language}): "
-        f"{len(cues)} cues",
-        flush=True,
+        f"{len(cues)} cues"
     )
 
     return cues
@@ -749,9 +742,8 @@ def prepare(
 
     if has_transcript(media):
 
-        print(
-            f"    Reusing transcript: {cues_path}",
-            flush=True,
+        say(
+            f"    Reusing transcript: {cues_path}"
         )
 
         cues = load_cues(cues_path)
@@ -899,9 +891,8 @@ def render(
         srt_path,
     )
 
-    print(
-        f"    Subtitles: {srt_path}",
-        flush=True,
+    say(
+        f"    Subtitles: {srt_path}"
     )
 
     if not segments:

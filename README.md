@@ -190,7 +190,10 @@ so ask for the listing and pick from it:
 subcast "https://www.youtube.com/@channel/videos" --pick
 ```
 
-Type `3`, `2,5-7` or `all`. Press Enter to stop without playing anything.
+Type `3`, `2,5-7` or `all`. Press Enter to stop without playing anything. A `d`
+after a choice downloads it into the cache with its subtitles instead of playing
+it - `3d` keeps the third entry for later - and a selection can mix the two:
+`2d,1` keeps the second and plays the first, while what you play plays.
 
 **Keep a copy.** Download an item and its subtitles instead of watching:
 
@@ -199,6 +202,12 @@ subcast <url> --save --subs
 ```
 
 Subcast prints the path it wrote, under `~/Videos/<source>/`.
+
+**Keep what is playing.** Press `d` while an item plays to put that item in the
+cache with its subtitles, without stopping the playback. Subcast says
+`Cached: <path>` and `Subtitles ready: <path>`, each as it lands. Items are kept
+one at a time, in the order they were asked for, and in the shell a command that
+only keeps something hands the prompt straight back while the work goes on.
 
 ## Documentation
 

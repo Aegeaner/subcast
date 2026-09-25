@@ -10,9 +10,16 @@ from .background import Background
 from .captionbar import clock
 from .sources import Media
 
-PROMPT = "Play which? [3, 5-7, all, r to refresh, Enter to stop] "
+PROMPT = (
+    "Play which? [3, 5-7, 3d to download, all, r to refresh, "
+    "Enter to stop] "
+)
 
 COMPLAINT = "    ?"
+
+# What a selection writes after an entry to ask for it to be downloaded
+# into the cache with its subtitles rather than played.
+DOWNLOAD = "d"
 
 # The key that asks the source again; the menu is redrawn when it answers.
 REFRESH = "r"
@@ -49,14 +56,19 @@ def listing_line(
 def parse_selection(
     selection: str,
     count: int,
-) -> list[int] | None:
+) -> list[tuple[int, bool]] | None:
     """
-    The entries a selection names, as indices into the listing.
+    The entries a selection names, each with whether it was marked for
+    download.
 
-    `3`, `2,5-7` and `all` are selections; an empty one is nothing at all.
-    A selection that cannot be read - a word, a backwards range, a number
-    that is not in the listing - comes back as None, so the caller can ask
-    again rather than guess.
+    `3`, `2,5-7` and `all` are selections, and a `d` after any of them marks
+    that entry for the cache rather than for playback: `3d` is the third
+    entry downloaded with its subtitles, `2d,5` is the second downloaded
+    and the fifth played, and `3d,3` is the third downloaded - a mark on any
+    mention of an entry is a mark on the entry. An empty one is nothing at
+    all. A selection that cannot be read - a word, a backwards range, a
+    number that is not in the listing - comes back as None, so the caller
+    can ask again rather than guess.
     """
 
     text = selection.strip().lower()
@@ -65,11 +77,7 @@ def parse_selection(
 
         return []
 
-    if text == "all":
-
-        return list(range(count))
-
-    chosen: list[int] = []
+    chosen: dict[int, bool] = {}
 
     for part in text.split(","):
 
@@ -79,7 +87,19 @@ def parse_selection(
 
             continue
 
-        first, dash, last = part.partition("-")
+        download = part.endswith(DOWNLOAD)
+
+        body = part[:-1] if download else part
+
+        if body == "all":
+
+            for number in range(count):
+
+                chosen[number] = chosen.get(number, False) or download
+
+            continue
+
+        first, dash, last = body.partition("-")
 
         if not first.strip().isdigit():
 
@@ -102,11 +122,9 @@ def parse_selection(
 
                 return None
 
-            if number - 1 not in chosen:
+            chosen[number - 1] = chosen.get(number - 1, False) or download
 
-                chosen.append(number - 1)
-
-    return sorted(chosen)
+    return sorted(chosen.items())
 
 
 def read_line(
@@ -293,9 +311,13 @@ def choose(
     again: Callable[[], Background[list[Media]]] | None = None,
     ask: Callable[[str], str | None] = read_line,
     tell: Callable[[str], None] = print,
-) -> list[Media]:
+) -> list[tuple[Media, bool]]:
     """
     Print a listing and ask which entries to play.
+
+    What comes back is each chosen entry with whether it was marked `d`: a
+    marked one is the caller's to download into the cache with its
+    subtitles, an unmarked one to play.
 
     `again` fetches the listing afresh: one is started as the menu opens,
     and the menu is redrawn with what it found, so a cached list is never
@@ -363,8 +385,8 @@ def choose(
         if picked is not None:
 
             return [
-                displayed[index]
-                for index in picked
+                (displayed[index], download)
+                for index, download in picked
             ]
 
         screen.line(COMPLAINT)

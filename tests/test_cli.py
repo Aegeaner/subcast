@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from subcast import cli, config, player
+from subcast import background, cli, config, player
 from subcast.media import Ranged
 from subcast.sources import Captions, Media, rte
 
@@ -606,6 +606,364 @@ def test_the_window_is_told_what_the_controller_does(
     assert asked == ["always", "never"]
 
 
+def test_caching_an_item_says_what_landed(monkeypatch, tmp_path, capsys):
+    """
+    The two lines a caching answers with: the file the cache holds, and the
+    subtitles made from it.
+    """
+
+    monkeypatch.setattr(
+        cli,
+        "cache_stem",
+        lambda media_item: tmp_path / media_item.key,
+    )
+    monkeypatch.setattr(
+        cli,
+        "acquire",
+        lambda media_item, stem: tmp_path / "abc.mp3",
+    )
+    monkeypatch.setattr(
+        cli,
+        "prepare",
+        lambda media_item, audio, model, device, subs_from: PREPARED,
+    )
+
+    cli.cache_item(media(), args())
+
+    printed = capsys.readouterr().out
+
+    assert f"Cached: {tmp_path / 'abc.mp3'}" in printed
+    assert f"Subtitles ready: {PREPARED.srt_path}" in printed
+
+
+def test_a_broadcast_is_not_cached(capsys):
+    """
+    A broadcast has no finished audio to keep: its captions only exist
+    while it plays, and there is nothing else to put in the cache.
+    """
+
+    cli.cache_item(replace(media(), live=True), args())
+
+    assert (
+        "cannot be cached while it airs"
+        in capsys.readouterr().out
+    )
+
+
+def test_the_player_is_given_a_key_that_caches_the_item(
+    monkeypatch,
+    tmp_path,
+):
+    """
+    Playback carries what the `d` key does - an ask of the run's queue, the
+    same one a marked entry goes into - and the queue's lines, for the
+    player to say between redraws. A broadcast is the exception: it has
+    nothing to cache, so it gets the lines but no key.
+    """
+
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
+
+    asked: list[player.CacheWork | None] = []
+
+    monkeypatch.setattr(
+        cli,
+        "play_window",
+        lambda url, *rest, **kwargs: asked.append(kwargs["cache"]) or 0,
+    )
+
+    caching = cli.Caching()
+    item = media()
+
+    assert cli.play_item(Source(), item, item, args(), None, caching) == 0
+    assert callable(asked[0].press)
+    assert callable(asked[0].notes)
+
+    live = replace(media(), live=True)
+
+    assert cli.play_item(Source(), live, live, args(), None, caching) == 0
+    assert asked[1].press is None
+    assert callable(asked[1].notes)
+
+
+def test_the_cache_key_queues_the_item_and_says_what_became_of_it(
+    monkeypatch,
+    capsys,
+):
+    """
+    The key is a request rather than a second copy of the work: pressing it
+    queues the item behind whatever is already being kept, and pressing it
+    again says where that item stands instead of queueing it twice - two
+    jobs for one item would be two writers of the same cache files.
+    """
+
+    release = threading.Event()
+    started = threading.Event()
+    finished = threading.Event()
+
+    def cache(media_item, args):
+        started.set()
+        release.wait(timeout=5)
+        finished.set()
+
+    monkeypatch.setattr(cli, "cache_item", cache)
+
+    caching = cli.Caching()
+    item = media(title="An episode")
+
+    cli.cache_ask(caching, item, args())
+
+    assert started.wait(timeout=5)
+    assert not finished.is_set()
+    assert "Caching: An episode" in capsys.readouterr().out
+
+    cli.cache_ask(caching, item, args())
+
+    assert (
+        "This item is being cached already."
+        in capsys.readouterr().out
+    )
+
+    release.set()
+
+    assert finished.wait(timeout=5)
+
+    caching.wait(5)
+    caching.take_notes()
+
+    cli.cache_ask(caching, item, args())
+
+    assert "This item is cached already." in capsys.readouterr().out
+
+
+def test_a_caching_that_goes_wrong_is_reported_and_the_queue_goes_on(
+    monkeypatch,
+):
+    """
+    One item that will not come down is one item: the failure is a line for
+    whoever owns the screen, and the next item is still waiting its turn.
+    """
+
+    def explode(media_item, args):
+        raise RuntimeError("no link to the audio")
+
+    monkeypatch.setattr(cli, "cache_item", explode)
+
+    caching = cli.Caching()
+
+    first = replace(media(), key="one")
+    second = replace(media(), key="two")
+
+    cli.cache_ask(caching, first, args())
+    cli.cache_ask(caching, second, args())
+
+    caching.wait(5)
+
+    said = caching.take_notes()
+
+    assert said == [
+        "    Caching failed: no link to the audio",
+        "    Caching failed: no link to the audio",
+    ]
+
+    assert caching.done_yet()
+
+
+def test_a_marked_entry_is_cached_and_not_played(monkeypatch, tmp_path):
+    """
+    A listing choice with a `d` after it asks for the entry to be kept
+    rather than watched: the run caches it, waits for it to land so its
+    lines can be said, and opens no player - which is what downloading an
+    episode to listen to later means.
+    """
+
+    in_config_dir(monkeypatch, tmp_path)
+    in_cache(monkeypatch, tmp_path)
+
+    item = replace(media(), key="one", title="The first")
+
+    monkeypatch.setattr(
+        cli,
+        "resolve_target",
+        lambda args: cli.Target(Source(), "rhs", "rhs"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "menu_entries",
+        lambda source, url, args: ([item], None),
+    )
+    monkeypatch.setattr(
+        cli.picker,
+        "choose",
+        lambda items, again: [(item, True)],
+    )
+    monkeypatch.setattr(
+        cli,
+        "resolve_item",
+        lambda source, chosen: chosen,
+    )
+
+    cached: list[str] = []
+
+    monkeypatch.setattr(
+        cli,
+        "cache_item",
+        lambda chosen, args: cached.append(chosen.key),
+    )
+    monkeypatch.setattr(
+        cli,
+        "play_item",
+        lambda *arguments: pytest.fail("played a download"),
+    )
+
+    assert cli.run_once(cli.parse_args(["--feed", "rhs"])) == 0
+    assert cached == ["one"]
+
+
+def test_a_shells_run_leaves_what_it_asked_to_keep_to_the_shell(
+    monkeypatch,
+    tmp_path,
+):
+    """
+    A shell command's item outlives the command: the run does not wait for
+    it, so the prompt comes back while the download is still going, and the
+    shell is what says the lines when they land.
+    """
+
+    in_config_dir(monkeypatch, tmp_path)
+    in_cache(monkeypatch, tmp_path)
+
+    item = replace(media(), key="one", title="The first")
+
+    monkeypatch.setattr(
+        cli,
+        "resolve_target",
+        lambda args: cli.Target(Source(), "rhs", "rhs"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "menu_entries",
+        lambda source, url, args: ([item], None),
+    )
+    monkeypatch.setattr(
+        cli.picker,
+        "choose",
+        lambda items, again: [(item, True)],
+    )
+    monkeypatch.setattr(
+        cli,
+        "resolve_item",
+        lambda source, chosen: chosen,
+    )
+
+    release = threading.Event()
+    finished = threading.Event()
+
+    def cache(chosen, args):
+        release.wait(timeout=5)
+        finished.set()
+        background.say("    Cached: (test)")
+
+    monkeypatch.setattr(cli, "cache_item", cache)
+    monkeypatch.setattr(
+        cli,
+        "play_item",
+        lambda *arguments: pytest.fail("played a download"),
+    )
+
+    jobs = cli.Caching()
+
+    assert (
+        cli.run_once(
+            cli.parse_args(["--feed", "rhs"]),
+            jobs,
+            wait_for_caching=False,
+        )
+        == 0
+    )
+
+    # the run is over and the item is still being kept
+    assert not finished.is_set()
+    assert not jobs.done_yet()
+
+    release.set()
+
+    assert finished.wait(timeout=5)
+    jobs.wait(5)
+
+    assert jobs.take_notes() == ["    Cached: (test)"]
+
+
+def test_a_marked_entry_is_kept_beside_what_plays(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """
+    The mark belongs to the entry, not to the answer, and the keeping
+    happens beside the playback: `2d,1` plays the first while the second is
+    downloaded, rather than after it. The job is held open until the play
+    is over, so a run that waited for the download would never finish, and
+    the line it said while the player was running is printed once the
+    player has gone.
+    """
+
+    in_config_dir(monkeypatch, tmp_path)
+    in_cache(monkeypatch, tmp_path)
+
+    first = replace(media(), key="one", title="The first")
+    second = replace(media(), key="two", title="The second")
+
+    monkeypatch.setattr(
+        cli,
+        "resolve_target",
+        lambda args: cli.Target(Source(), "rhs", "rhs"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "menu_entries",
+        lambda source, url, args: ([first, second], None),
+    )
+    monkeypatch.setattr(
+        cli.picker,
+        "choose",
+        lambda items, again: [(first, False), (second, True)],
+    )
+    monkeypatch.setattr(
+        cli,
+        "resolve_item",
+        lambda source, chosen: chosen,
+    )
+    monkeypatch.setattr(
+        cli,
+        "wants_subtitles",
+        lambda media_item, args: False,
+    )
+    monkeypatch.setattr(cli, "saved_positions", lambda media_item, args: None)
+    monkeypatch.setattr(cli, "chapters_for", lambda media_item: None)
+
+    played = threading.Event()
+    order: list[str] = []
+
+    def cache(chosen, args):
+        # Only a play that went by while this was going lets it finish.
+        assert played.wait(timeout=5)
+        order.append(f"cached {chosen.key}")
+        background.say("    Cached: (test)")
+
+    monkeypatch.setattr(cli, "cache_item", cache)
+
+    def play(source, item, media_item, args, subtitles, caching=None):
+        order.append(f"played {media_item.key}")
+        played.set()
+        return 0
+
+    monkeypatch.setattr(cli, "play_item", play)
+
+    assert cli.run_once(cli.parse_args(["--feed", "rhs"])) == 0
+    assert order == ["played one", "cached two"]
+    assert "    Cached: (test)" in capsys.readouterr().out
+
+
 def test_the_next_item_is_prepared_while_this_one_plays(monkeypatch):
     """
     A feed or a playlist is watched one item after another, so the run
@@ -709,7 +1067,7 @@ def test_a_listing_is_played_item_after_item(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(cli, "saved_positions", lambda media, args: None)
     monkeypatch.setattr(cli, "chapters_for", lambda media: None)
 
-    def play(source, item, media, args, subtitles):
+    def play(source, item, media, args, subtitles, caching=None):
         assert subtitles.wait() is PREPARED
         order.append(f"played {media.key}")
         return 0
@@ -974,7 +1332,7 @@ def test_an_item_must_be_resolved_and_heard_from_the_same_audio(
         order.append("transcribed")
         return PREPARED
 
-    def play(source, listed, media, args, subtitles):
+    def play(source, listed, media, args, subtitles, caching=None):
         assert media.url == "https://example.test/audio.mp3"
         assert subtitles.done_yet() is False
         order.append("played")
@@ -1374,7 +1732,7 @@ def test_a_bare_run_opens_the_shell_with_the_command_line_s_own_parser(
 
     entered: list[argparse.Namespace] = []
 
-    def run(parse, once):
+    def run(parse, once, **rest):
 
         entered.append(parse(["--feeds"]))
 

@@ -23,6 +23,8 @@ from pathlib import Path
 from .player import (
     LIVE_AUDIO_FORMAT,
     SAVE_SECONDS,
+    CacheKey,
+    CacheWork,
     Positions,
     connect,
     mpv_path,
@@ -602,6 +604,7 @@ def play(
     stream: bool = False,
     positions: Positions | None = None,
     live: bool = False,
+    cache: CacheWork | None = None,
 ) -> int:
     """
     Play url through mpv with our own caption block. Returns mpv's exit
@@ -621,6 +624,10 @@ def play(
     `live` is a broadcast, whose cues arrive as they are made rather than
     all at once: the block draws each batch as it lands, and the sound is
     what is played.
+
+    `cache` is what the key that caches the item asks for, and what the
+    cache work has to say (`player.CacheWork`): the lines are printed by
+    this loop, which owns the block they would otherwise land in.
     """
 
     if (
@@ -651,6 +658,7 @@ def play(
             stream,
             positions,
             live,
+            cache,
         )
     )
 
@@ -663,6 +671,7 @@ def _play_once(
     stream: bool,
     positions: Positions | None,
     live: bool = False,
+    cache: CacheWork | None = None,
 ) -> int:
     """
     One attempt: mpv started for this item, up to its exit status.
@@ -731,6 +740,7 @@ def _play_once(
             subtitles,
             scale,
             positions,
+            cache,
         )
 
     finally:
@@ -752,6 +762,7 @@ def _follow(
     subtitles: PendingSubtitles,
     scale: int,
     positions: Positions | None = None,
+    cache: CacheWork | None = None,
 ) -> int:
     """
     Draw the block for as long as mpv plays.
@@ -760,6 +771,12 @@ def _follow(
     rows and the worker prints as it goes, so the two cannot share the
     screen. Playback is already running by then - mpv started before the
     wait - which is the part that matters.
+
+    The key that caches the item is bound here too: mpv is the terminal's
+    key reader while it plays, so a press reaches the run through the same
+    socket the block reads the playback position from - and what the cache
+    work says is printed here, between redraws, rather than from the worker
+    that said it.
     """
 
     settled = subtitles.wait()
@@ -800,6 +817,8 @@ def _follow(
 
         return process.wait()
 
+    key = CacheKey(client, cache)
+
     drawn = ""
     geometry: tuple[int, int, int] | None = None
     saved = 0.0
@@ -822,7 +841,10 @@ def _follow(
 
             if position is None:
 
-                time.sleep(POLL_SECONDS)
+                if key.wait(POLL_SECONDS):
+
+                    drawn = ""
+
                 continue
 
             seconds = float(position)
@@ -944,7 +966,11 @@ def _follow(
                 sys.stdout.write(screen)
                 sys.stdout.flush()
 
-            time.sleep(POLL_SECONDS)
+            if key.wait(POLL_SECONDS):
+
+                # Something was printed over the block: the next redraw has
+                # to put it back.
+                drawn = ""
 
         return process.returncode
 
